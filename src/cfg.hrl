@@ -18,4 +18,3 @@
          path = [],           % [NodeName] - full path to node
          opts = []
         }).
-
