@@ -16,13 +16,17 @@
          }).
 
 
--export([new/0, get/2, set/3, commit/1]).
+-export([new/0, exit_txn/1, get/2, set/3, commit/1]).
 
 new() ->
     TxnId = erlang:now(),
     #cfg_txn{txn_id = TxnId,
              copy_ets = {ets_copy, cfg_db:copy_to_ets()}
             }.
+
+exit_txn(#cfg_txn{copy_ets = EtsCopy}) ->
+    catch ets:delete(EtsCopy),
+    ok.
 
 
 -spec get(#cfg_txn{}, cfg:path()) -> {ok, cfg:value()} | undefined.

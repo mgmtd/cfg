@@ -18,7 +18,7 @@
         ]).
 
 
--export([transaction/0, set/3]).
+-export([transaction/0, exit_transaction/1, set/3]).
 
 -export_type([value/0, yang_value/0]).
 
@@ -63,6 +63,10 @@ action(_) -> fun(_) -> ok end. % Not used for config tree items, but provide def
 %%--------------------------------------------------------------------
 transaction() ->
     cfg_txn:new().
+
+exit_transaction(Txn) ->
+    cfg_txn:exit_txn(Txn).
+
 
 set(Txn, #tree{} = Item, Value) ->
     io:format("Setting value~n"),
