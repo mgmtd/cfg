@@ -9,9 +9,13 @@
 
 -include("cfg.hrl").
 
--export([load_schema/1, load_schema/2,
-         getters/0,
-         container/3, container/4,
+-export([init/2, load_schema/1, load_schema/2]).
+
+%% Functions needed to extract items from our schema records.
+-export([name/1, desc/1, children/1, action/1, node_type/1]).
+
+%% Functions to create nodes in the configuration tree
+-export([container/3, container/4,
          list/4, list/5,
          leaf_list/3, leaf_list/4,
          leaf/3, leaf/4
@@ -41,34 +45,40 @@
 %% provides the tree of schema items via the generator functions in
 %% this module
 
+-spec init(cfg_db:backend(), list()) -> ok.
+init(Backend, _Opts) when Backend == mnesia ->
+    cfg_db:init(Backend).
+
 %%--------------------------------------------------------------------
 %% Set up the structure needed for the generic expander to know enough
-%% about our #tree{}s
+%% about our #cfg_schema{}s
 %% --------------------------------------------------------------------
-getters() ->
-    cli:getters(fun name/1, fun desc/1, fun children/1, fun action/1, fun node_type/1).
+name(#cfg_schema{name = Name}) -> Name.
 
-name(#tree{name = Name}) -> Name.
+desc(#cfg_schema{desc = Desc}) -> Desc.
 
-desc(#tree{desc = Desc}) -> Desc.
+children(#cfg_schema{children = Cs}) -> Cs.
 
-children(#tree{children = Cs}) -> Cs.
-
-node_type(#tree{node_type = Type}) -> Type.
+node_type(#cfg_schema{node_type = Type}) -> Type.
 
 action(_) -> fun(_) -> ok end. % Not used for config tree items, but provide default
 
 %%--------------------------------------------------------------------
-%% Database API
+%% Configuration session transaction API
 %%--------------------------------------------------------------------
+
+%% @doc Long lived transaction started e.g. when user enters configuration
+%% mode in the CLI. Creates a copy of the configuration for making
+%% transaction local changes 
+%% --------------------------------------------------------------------
+-spec transaction() -> cfg_txn:txn().
 transaction() ->
     cfg_txn:new().
 
 exit_transaction(Txn) ->
     cfg_txn:exit_txn(Txn).
 
-
-set(Txn, #tree{} = Item, Value) ->
+set(Txn, #cfg_schema{} = Item, Value) ->
     io:format("Setting value~n"),
     cfg_txn:set(Txn, Item, Value),
     {ok, "ok", Txn}.
@@ -78,7 +88,7 @@ set(Txn, #tree{} = Item, Value) ->
 %% Schema API
 %%--------------------------------------------------------------------
 load_schema(Generators) ->
-    load_schema(Generators, "http://ns").
+    load_schema(Generators, default).
 
 load_schema(Generator, NameSpace) when is_function(Generator) ->
     load_schema([Generator], NameSpace);
@@ -95,50 +105,51 @@ load_schema(Generators, NameSpace) when is_list(Generators) ->
 %%--------------------------------------------------------------------
 %% User facing API to create configuration schema nodes of the 4 types
 %%--------------------------------------------------------------------
--spec container(Name::string(), Desc::string(), Children::list(term())) -> #tree{}.
+-spec container(Name::string(), Desc::string(), Children::list(term())) ->
+                       #cfg_schema{}.
 container(Name, Desc, Children) ->
     container(Name, Desc, Children, []).
 
 container(Name, Desc, Children, Opts) ->
-    #tree{node_type = container,
-          name = Name,
-          desc = Desc,
-          children = Children,
-          opts = Opts
-         }.
+    #cfg_schema{node_type = container,
+                name = Name,
+                desc = Desc,
+                children = Children,
+                opts = Opts
+               }.
 
 
 list(Name, Desc, Key, Children) ->
     list(Name, Desc, Key, Children, []).
 
 list(Name, Desc, Key, Children, Opts) when is_tuple(Key) ->
-    #tree{node_type = list,
-          name = Name,
-          desc = Desc,
-          children = Children,
-          key = Key,
-          opts = Opts
-         }.
+    #cfg_schema{node_type = list,
+                name = Name,
+                desc = Desc,
+                children = Children,
+                key = Key,
+                opts = Opts
+               }.
 
 leaf_list(Name, Desc, Type) ->
     leaf_list(Name, Desc, Type, []).
 
 leaf_list(Name, Desc, Type, Opts) ->
-    #tree{node_type = leaf_list,
-          name = Name,
-          desc = Desc,
-          type = Type,
-          opts = Opts
-         }.
+    #cfg_schema{node_type = leaf_list,
+                name = Name,
+                desc = Desc,
+                type = Type,
+                opts = Opts
+               }.
 
 leaf(Name, Desc, Type) ->
     leaf(Name, Desc, Type, []).
 
 leaf(Name, Desc, Type, Opts) ->
-    #tree{node_type = leaf,
-          name = Name,
-          desc = Desc,
-          type = Type,
-          opts = Opts
-         }.
+    #cfg_schema{node_type = leaf,
+                name = Name,
+                desc = Desc,
+                type = Type,
+                opts = Opts
+               }.
 

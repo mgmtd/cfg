@@ -10,10 +10,44 @@
 
 -include("cfg.hrl").
 
--export([copy_to_ets/0, cfg_list_to_tree/1]).
+-export([init/2, transaction/1, read/1, write/1]).
 
-copy_to_ets() ->
-    ok.
+-export([cfg_list_to_tree/1]).
+
+%%--------------------------------------------------------------------
+%% @doc Wrapper functions around the operations towards the chosen storage
+%% engine
+%%--------------------------------------------------------------------
+
+%%--------------------------------------------------------------------
+%% @doc Called once at startup to allow the chosen database backend to
+%% create tables etc.
+%% --------------------------------------------------------------------
+-spec init(mnesia | config, proplists:proplist()) -> ok.
+init(Backend, Opts) when Backend == mnesia;
+                   Backend == config ->
+    Backend:init(Opts),
+    ets:insert(cfg_meta, {backend, Backend}).
+
+transaction(Fun) when is_function(Fun) ->
+    Backend = backend(),
+    Backend:transaction(Fun).
+
+read(Key) ->
+    Backend = backend(),
+    Backend:read(Key).
+
+write(#cfg{} = Cfg) ->
+    Backend = backend(),
+    Backend:write(Cfg).
+
+backend() ->
+    case ets:lookup(cfg_meta, backend) of
+        [{_, Backend}] ->
+            Backend;
+        _ ->
+            config
+    end.
 
 %%-------------------------------------------------------------------
 %% @doc Construct a tree of configuration items from a flat list of

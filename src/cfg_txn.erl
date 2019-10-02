@@ -1,7 +1,7 @@
 %%%-------------------------------------------------------------------
 %%% @author Sean Hinde <sean@Seans-MacBook.local>
 %%% @copyright (C) 2019, Sean Hinde
-%%% @doc Configuration transaction handler
+%%% @doc Configuration session transaction handler
 %%%
 %%% @end
 %%% Created : 18 Sep 2019 by Sean Hinde <sean@Seans-MacBook.local>
@@ -15,11 +15,14 @@
          copy_ets
          }).
 
+-type txn() :: #cfg_txn{}.
+
+-export_type([txn/0]).
 
 -export([new/0, exit_txn/1, get/2, set/3, commit/1]).
 
 new() ->
-    TxnId = erlang:now(),
+    TxnId = erlang:monotonic_time(),
     #cfg_txn{txn_id = TxnId,
              copy_ets = {ets_copy, cfg_db:copy_to_ets()}
             }.

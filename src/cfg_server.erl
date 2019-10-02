@@ -22,7 +22,7 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-                nsmap        ::ets:tid()
+
                }).
 
 %%%===================================================================
@@ -43,8 +43,8 @@ start_link() ->
 
 load_schema(NS, ParsedSchema) ->
     io:format("Trees ~p~n",[ParsedSchema]),
-    %%gen_server:call(?MODULE, {load_schema, NS, ParsedSchema}).
-    ok.
+    gen_server:call(?MODULE, {load_schema, NS, ParsedSchema}).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -63,7 +63,8 @@ load_schema(NS, ParsedSchema) ->
                               ignore.
 init([]) ->
     process_flag(trap_exit, true),
-    {ok, #state{nsmap = ets:new(cfg_nsmap, [named_table, public])}}.
+    cfg_schema:init(),
+    {ok, #state{}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -80,8 +81,8 @@ init([]) ->
                          {noreply, NewState :: term(), hibernate} |
                          {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
                          {stop, Reason :: term(), NewState :: term()}.
-handle_call({load_schema, NS, ParsedSchema}, _From, #state{nsmap = NSMap} = State) ->
-    Reply = install_schema(NS, ParsedSchema, NSMap),
+handle_call({load_schema, NS, ParsedSchema}, _From, State) ->
+    Reply = cfg_schema:install_schema(NS, ParsedSchema),
     {reply, Reply, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -158,23 +159,3 @@ format_status(_Opt, Status) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-install_schema(NS, ParsedSchema, NSMap) ->
-    SchemaEts = schema_ets(NS, NSMap),
-    install_tree(SchemaEts, ParsedSchema).
-
-
-install_tree(Ets, [Tree|Ts]) ->
-    case Tree of
-        #tree{} ->
-            ok
-    end.
-
-schema_ets(NS, NSMap) ->
-    case ets:lookup(NSMap, NS) of
-        [{NS, Tid}] ->
-            Tid;
-        [] ->
-            Tid = ets:new(cfg_schema, []),
-            ets:insert(NS, Tid),
-            Tid
-    end.
