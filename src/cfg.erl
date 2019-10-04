@@ -46,8 +46,8 @@
 %% this module
 
 -spec init(cfg_db:backend(), list()) -> ok.
-init(Backend, _Opts) when Backend == mnesia ->
-    cfg_db:init(Backend).
+init(Backend, Opts) when Backend == mnesia ->
+    cfg_db:init(Backend, Opts).
 
 %%--------------------------------------------------------------------
 %% Set up the structure needed for the generic expander to know enough
@@ -59,9 +59,9 @@ desc(#cfg_schema{desc = Desc}) -> Desc.
 
 children(#cfg_schema{children = Cs}) -> Cs.
 
-node_type(#cfg_schema{node_type = Type}) -> Type.
-
 action(_) -> fun(_) -> ok end. % Not used for config tree items, but provide default
+
+node_type(#cfg_schema{node_type = Type}) -> Type.
 
 %%--------------------------------------------------------------------
 %% Configuration session transaction API

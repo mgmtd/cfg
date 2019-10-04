@@ -39,7 +39,7 @@
 %%--------------------------------------------------------------------
 init(Opts) ->
     Dir = proplists:get_value(directory, Opts, "config_db"),
-    ok = filelib:ensure_path(Dir).
+    ok = filelib:ensure_dir(Dir).
 
 transaction(Fun) ->
     %% 0. Somehow lock the disk file

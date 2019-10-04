@@ -10,7 +10,7 @@
 
 -include("cfg.hrl").
 
--export([init/2, transaction/1, read/1, write/1]).
+-export([init/2, transaction/1, read/1, write/1, copy_to_ets/0]).
 
 -export([cfg_list_to_tree/1]).
 
@@ -25,29 +25,37 @@
 %% --------------------------------------------------------------------
 -spec init(mnesia | config, proplists:proplist()) -> ok.
 init(Backend, Opts) when Backend == mnesia;
-                   Backend == config ->
-    Backend:init(Opts),
-    ets:insert(cfg_meta, {backend, Backend}).
+                         Backend == config ->
+    BackendMod = backend_mod(Backend),
+    BackendMod:init(Opts),
+    ets:insert(cfg_meta, {backend, BackendMod}).
 
 transaction(Fun) when is_function(Fun) ->
-    Backend = backend(),
-    Backend:transaction(Fun).
+    BackendMod = backend(),
+    BackendMod:transaction(Fun).
 
 read(Key) ->
-    Backend = backend(),
-    Backend:read(Key).
+    BackendMod = backend(),
+    BackendMod:read(Key).
 
 write(#cfg{} = Cfg) ->
-    Backend = backend(),
-    Backend:write(Cfg).
+    BackendMod = backend(),
+    BackendMod:write(Cfg).
+
+copy_to_ets() ->
+    BackendMod = backend(),
+    BackendMod:copy_to_ets().
 
 backend() ->
     case ets:lookup(cfg_meta, backend) of
-        [{_, Backend}] ->
-            Backend;
+        [{_, Mod}] ->
+            Mod;
         _ ->
-            config
+            cfg_backend_mnesia
     end.
+
+backend_mod(mnesia) -> cfg_backend_mnesia;
+backend_mod(config) -> cfg_backend_config.
 
 %%-------------------------------------------------------------------
 %% @doc Construct a tree of configuration items from a flat list of

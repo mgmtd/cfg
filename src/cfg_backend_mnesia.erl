@@ -12,6 +12,8 @@
 
 -export([init/1]).
 
+-export([copy_to_ets/0]).
+
 -export([transaction/1,
          read/2,
          write/2,
@@ -35,8 +37,8 @@ init(Opts) ->
 %% @doc init mnesia in a directory at Path on Nodes.
 -spec init_db(file:filename(), [node()]) -> ok.
 init_db(Path, Nodes) ->
-    ok = filelib:ensure_path(Path),
-    ok = application:setenv(mnesia_dir, Path),
+    ok = filelib:ensure_dir(Path),
+    ok = application:set_env(mnesia, mnesia_dir, Path),
     create_schema(Nodes),
     ok = application:start(mnesia),
     ok = create_table(Nodes),
@@ -60,6 +62,14 @@ first(_Txn) ->
 next(_Txn, Key) ->
     mnesia:next(cfg, Key).
 
+-spec copy_to_ets() -> ets:tid().
+copy_to_ets() ->
+    Ets = ets:new(cfg_txn, [ordered_set, {keypos, #cfg.path}]),
+    Fun = fun() -> mnesia:match_object(#cfg{_ = '_'}) end,
+    {atomic, Rows} = mnesia:transaction(Fun),
+    lists:foreach(fun(Row) -> ets:insert(Ets, Row) end, Rows),
+    Ets.
+
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
@@ -67,7 +77,7 @@ create_schema(Nodes) ->
     case catch mnesia:create_schema(Nodes) of
         ok ->
             ok;
-        {error, {already_exists, _}} ->
+        {error, {_, {already_exists, _}}} ->
             ok
     end.
 

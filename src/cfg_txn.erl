@@ -12,7 +12,7 @@
         {
          txn_id,
          ops = [],
-         copy_ets
+         ets_copy
          }).
 
 -type txn() :: #cfg_txn{}.
@@ -24,16 +24,16 @@
 new() ->
     TxnId = erlang:monotonic_time(),
     #cfg_txn{txn_id = TxnId,
-             copy_ets = {ets_copy, cfg_db:copy_to_ets()}
+             ets_copy = cfg_db:copy_to_ets()
             }.
 
-exit_txn(#cfg_txn{copy_ets = EtsCopy}) ->
+exit_txn(#cfg_txn{ets_copy = EtsCopy}) ->
     catch ets:delete(EtsCopy),
     ok.
 
 
 -spec get(#cfg_txn{}, cfg:path()) -> {ok, cfg:value()} | undefined.
-get(#cfg_txn{copy_ets = Copy}, Path) ->
+get(#cfg_txn{ets_copy = Copy}, Path) ->
     case cfg_db:lookup(Copy, Path) of
         {ok, Value} ->
             {ok, Value};
@@ -41,7 +41,7 @@ get(#cfg_txn{copy_ets = Copy}, Path) ->
             cfg_schema:lookup_default(Path)
     end.
 
-set(#cfg_txn{copy_ets = Copy, ops = Ops} = Txn, Path, Value) ->
+set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
     case cfg_db:insert(Copy, Path, Value) of
         ok ->
             Txn#cfg_txn{ops = [{set, Path, Value} | Ops]};
@@ -49,7 +49,7 @@ set(#cfg_txn{copy_ets = Copy, ops = Ops} = Txn, Path, Value) ->
             throw(Err)
     end.
 
-commit(#cfg_txn{copy_ets = {ets_copy, Copy}, ops = Ops}) ->
+commit(#cfg_txn{ets_copy = Copy, ops = Ops}) ->
     case cfg_db:apply_ops(Ops) of
         ok ->
             ets:delete(Copy),
