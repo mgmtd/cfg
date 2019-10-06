@@ -65,11 +65,11 @@ node_type(#cfg_schema{node_type = Type}) -> Type.
 
 %%--------------------------------------------------------------------
 %% Configuration session transaction API
-%%--------------------------------------------------------------------
-
+%%
+%%
 %% @doc Long lived transaction started e.g. when user enters configuration
 %% mode in the CLI. Creates a copy of the configuration for making
-%% transaction local changes 
+%% transaction local changes
 %% --------------------------------------------------------------------
 -spec transaction() -> cfg_txn:txn().
 transaction() ->
@@ -78,14 +78,22 @@ transaction() ->
 exit_transaction(Txn) ->
     cfg_txn:exit_txn(Txn).
 
-set(Txn, #cfg_schema{} = Item, Value) ->
-    io:format("Setting value~n"),
-    cfg_txn:set(Txn, Item, Value),
+set(Txn, SchemaPath, Value) ->
+    io:format("Setting path ~p to value ~p in Txn ~p~n",[SchemaPath, Value, Txn]),
+    cfg_txn:set(Txn, SchemaPath, Value),
     {ok, "ok", Txn}.
+
+schema_list_to_path(SchemaItems) ->
+    lists:map(fun(#cfg_schema{name = Name}) -> Name end, SchemaItems).
+
+schema_list_to_path([#cfg_schema{} = Last], Acc) ->
+    {Last, lists:reverse(Acc)};
+schema_list_to_path([#cfg_schema{name = Name} | Ss], Acc) ->
+    schema_list_to_path(Ss, [Name | Acc]).
 
 
 %%--------------------------------------------------------------------
-%% Schema API
+%% @doc load a list of #cfg_schema{} trees into ets storage
 %%--------------------------------------------------------------------
 load_schema(Generators) ->
     load_schema(Generators, default).
