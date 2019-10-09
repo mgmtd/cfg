@@ -17,7 +17,7 @@
          desc,
          type,
          key = {},            % {NodeName1, NodeName2, Nodename3} for lists
-         key_value = {},      % {Key1, Key2} value of list key
+         key_value = [],      % [Key1, Key2] values of list keys
          children = [],       % [{M,F}, {M1,F1}, fun()] | {M,F} | fun()
          opts = []
         }).

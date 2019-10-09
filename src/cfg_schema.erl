@@ -62,6 +62,14 @@ install_tree(Ets, [Node|Nodes]) ->
             install_tree(Ets, Children),
             install_tree(Ets, Nodes);
 
+        #cfg_schema{node_type = list, children = Cs} ->
+            Children = eval_children(Cs),
+            %% FIXME. Somewhere we should assert the list keys also
+            %% exist as children
+            insert_node(Ets, Node),
+            install_tree(Ets, Children),
+            install_tree(Ets, Nodes);
+
         #cfg_schema{node_type = Leaf} when Leaf == leaf; Leaf == leaf_list ->
             insert_node(Ets, Node),
             install_tree(Ets, Nodes)

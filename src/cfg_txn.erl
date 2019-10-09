@@ -21,7 +21,7 @@
 
 -export_type([txn/0]).
 
--export([new/0, exit_txn/1, get/2, set/3, commit/1]).
+-export([new/0, exit_txn/1, get/2, set/3, list_keys/2, commit/1]).
 
 new() ->
     TxnId = erlang:unique_integer(),
@@ -54,6 +54,9 @@ set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
             error_logger:error_msg(Reason),
             Txn
     end.
+
+list_keys(#cfg_txn{ets_copy = Copy}, Path) ->
+    ets:select(Copy, [{#cfg{path = Path ++ ['$1'], _ = '_'}, [], ['$1']}]).
 
 
 %% Insert all the database items required for a single configuration
@@ -92,6 +95,8 @@ set_path_items(Ets, [I | Is], Value, Path) ->
             Cfg = schema_to_cfg(I, FullPath, undefined),
             ets:insert(Ets, Cfg),
             set_path_items(Ets, Is, Value, FullPath);
+
+        %% List items
         #cfg_schema{node_type = list, name = Name, key = Key, key_value = KV} ->
             FullPath = Path ++ [Name],
             ListItemCfg = schema_to_cfg(I, FullPath, Key),
@@ -99,6 +104,8 @@ set_path_items(Ets, [I | Is], Value, Path) ->
             ListItemsPath = FullPath ++ [KV],
             insert_list_keys(Ets, ListItemsPath, I),
             set_path_items(Ets, Is, Value, ListItemsPath);
+
+        %% Leafs of both kinds
         #cfg_schema{node_type = Leaf, name = Name} when Leaf == leaf;
                                                         Leaf == leaf_list ->
             FullPath = Path ++ [Name],
@@ -180,7 +187,6 @@ validate_set_list_keys(Ets, Path, [{Name, Value}|Ks]) ->
         [_] ->
             {error, "Invalid existing list key entry"}
     end.
-
 
 commit(#cfg_txn{ets_copy = Copy, ops = Ops}) ->
     case cfg_db:apply_ops(Ops) of

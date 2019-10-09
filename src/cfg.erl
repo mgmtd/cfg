@@ -12,7 +12,7 @@
 -export([init/2, load_schema/1, load_schema/2]).
 
 %% Functions needed to extract items from our schema records.
--export([name/1, desc/1, children/1, action/1, node_type/1]).
+-export([name/1, desc/1, children/3, action/1, node_type/1]).
 
 %% Functions to create nodes in the configuration tree
 -export([container/3, container/4,
@@ -50,18 +50,78 @@ init(Backend, Opts) when Backend == mnesia ->
     cfg_db:init(Backend, Opts).
 
 %%--------------------------------------------------------------------
-%% Set up the structure needed for the generic expander to know enough
+%% The callbacks needed for the generic expander to know enough
 %% about our #cfg_schema{}s
 %% --------------------------------------------------------------------
 name(#cfg_schema{name = Name}) -> Name.
 
 desc(#cfg_schema{desc = Desc}) -> Desc.
 
-children(#cfg_schema{children = Cs}) -> Cs.
+children(#cfg_schema{node_type = container, name = Name, path = Path, children = Cs}, Txn, _AddListItems) ->
+    Children = expand_children(Cs, Txn),
+    insert_full_path(Children, Path ++ [Name]);
+children(#cfg_schema{node_type = list, path = Path, name = Name} = S, Txn, AddListItems) ->
+    %% Children for list items are the list keys, and which one
+    %% depends on how far we got in gathering the list keys. We can
+    %% abuse the key_values field to track how many list keys we have,
+    %% and re-use the same #cfg_schema{} list item for all the list
+    %% item "children" so we still have it around for the real
+    %% children.
+    KeysSoFar = length(S#cfg_schema.key_value),
+    KeysNeeded = size(S#cfg_schema.key),
+    if KeysSoFar == KeysNeeded ->
+            %% Now we have all the keys return the real child list.
+            %% FIXME - remove the list keys from this list
+            Children = expand_children(S#cfg_schema.children, Txn),
+            insert_full_path(Children, Path ++ [Name]);
+       true ->
+            %% First time: Needed = 2, SoFar == 0, element = 1
+            %% 2nd time:   Needed = 2, SoFar = 1, element = 2
+            %% Last time:  Needed = 2, SoFar = 2
+            NextKey = element(KeysSoFar + 1, S#cfg_schema.key),
+            Keys = [NextKey | S#cfg_schema.key_value],
+            Template = S#cfg_schema{key_value = Keys},
+            ListKeys = cfg_txn:list_keys(Txn, S#cfg_schema.path),
+            %% This is all the keys. We need to only show the current
+            %% level, only unique values, and only items where the
+            %% previous key parts match
+            %%
+            %% We don't have all this: the path isn't filled in, and
+            %% we don't have the previous key values
+            %% FIXME: Fill the path in
+            %% FIXME: include previous key parts somewhere
+            io:format("TEMPLATE ~p~n",[Template]),
+
+            %% The goal here is to return the set of possible values at this point, plus soemthing that will prompt for a new list item
+            %% So we need to just convince the menu thingy we are a normal list of children, and we need to keep enough blah around so we can carry one afterwards
+            case AddListItems of
+                true ->
+                    [Template#cfg_schema{node_type = new_list_item}];
+                false ->
+                    []
+            end
+    end;
+children(_, _, _) ->
+    [].
+
 
 action(_) -> fun(_) -> ok end. % Not used for config tree items, but provide default
 
 node_type(#cfg_schema{node_type = Type}) -> Type.
+
+
+expand_children(F, Arg) when is_function(F) ->
+    case erlang:fun_info(F, arity) of
+        {arity, 0} -> F();
+        {arity, 1} -> F(Arg)
+    end;
+expand_children(L, _Arg) when is_list(L) -> L;
+expand_children(_, _) -> [].
+
+insert_full_path(Children, Path) ->
+    lists:map(fun(#cfg_schema{} = S) ->
+                      S#cfg_schema{path = Path}
+              end, Children).
 
 %%--------------------------------------------------------------------
 %% Configuration session transaction API
