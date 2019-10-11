@@ -40,7 +40,7 @@ init_db(Path, Nodes) ->
     ok = filelib:ensure_dir(Path),
     ok = application:set_env(mnesia, mnesia_dir, Path),
     create_schema(Nodes),
-    ok = application:start(mnesia),
+    ok = start_mnesia(),
     ok = create_table(Nodes),
     ok = mnesia:wait_for_tables([cfg], 30000).
 
@@ -79,6 +79,16 @@ create_schema(Nodes) ->
             ok;
         {error, {_, {already_exists, _}}} ->
             ok
+    end.
+
+start_mnesia() ->
+    case application:start(mnesia) of
+        ok ->
+            ok;
+        {error,{already_started,mnesia}} ->
+            ok;
+        Else ->
+            Else
     end.
 
 create_table(Nodes) ->

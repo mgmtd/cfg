@@ -48,7 +48,7 @@ set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
     case check_conflict(Copy, Path, Value, []) of
         ok ->
             set_path_items(Copy, Path, Value, []),
-            io:format("~p~n",[ets:tab2list(Copy)]),
+            io:format("cfg_txn:set ~p~n",[ets:tab2list(Copy)]),
             Txn#cfg_txn{ops = [{set, Path, Value} | Ops]};
         {error, Reason} ->
             error_logger:error_msg(Reason),
@@ -97,11 +97,12 @@ set_path_items(Ets, [I | Is], Value, Path) ->
             set_path_items(Ets, Is, Value, FullPath);
 
         %% List items
-        #cfg_schema{node_type = list, name = Name, key = Key, key_value = KV} ->
+        #cfg_schema{node_type = list, name = Name,
+                    key_names = Keys, key_values = KVs} ->
             FullPath = Path ++ [Name],
-            ListItemCfg = schema_to_cfg(I, FullPath, Key),
+            ListItemCfg = schema_to_cfg(I, FullPath, Keys),
             ets:insert(Ets, ListItemCfg),
-            ListItemsPath = FullPath ++ [KV],
+            ListItemsPath = FullPath ++ [list_to_tuple(KVs)],
             insert_list_keys(Ets, ListItemsPath, I),
             set_path_items(Ets, Is, Value, ListItemsPath);
 
@@ -113,9 +114,8 @@ set_path_items(Ets, [I | Is], Value, Path) ->
             ets:insert(Ets, Cfg)
     end.
 
-insert_list_keys(Ets, Path, #cfg_schema{key = Key, key_value = KV} = I) ->
-    KeyNames = tuple_to_list(Key),
-    KeyValues = tuple_to_list(KV),
+insert_list_keys(Ets, Path, #cfg_schema{key_names = KeyNames,
+                                        key_values = KeyValues}) ->
     NVPairs = lists:zip(KeyNames, KeyValues),
     lists:foreach(fun({Name, Value}) ->
                           Cfg = #cfg{name = Name,
@@ -137,7 +137,8 @@ check_conflict(Ets, [I|Is], Value, Path) ->
                 [#cfg{}] ->
                     {error, "schema conflict"}
             end;
-        #cfg_schema{node_type = list, name = Name, key = Key, key_value = KV} ->
+        #cfg_schema{node_type = list, name = Name,
+                    key_values = KVs} ->
             FullPath = Path ++ [Name],
             case ets:lookup(Ets, FullPath) of
                 [] ->
@@ -145,7 +146,7 @@ check_conflict(Ets, [I|Is], Value, Path) ->
                 [#cfg{node_type = list, name = Name}] ->
                     case validate_set_list(Ets, FullPath, I) of
                         ok ->
-                            ListItemPath = FullPath ++ [KV],
+                            ListItemPath = FullPath ++ [list_to_tuple(KVs)],
                             check_conflict(Ets, Is, Value, ListItemPath);
                         {error, Reason} ->
                             {error, Reason}
@@ -169,9 +170,8 @@ check_conflict(Ets, [I|Is], Value, Path) ->
 %% Ensure the entries for the list keys exist. We already proved there
 %% is an entry for the list item itself, so these leafs *must*
 %% exist. Work checking though.
-validate_set_list(Ets, FullPath, #cfg_schema{key = Key, key_value = KV} = I) ->
-    KeyNames = tuple_to_list(Key),
-    KeyValues = tuple_to_list(KV),
+validate_set_list(Ets, FullPath, #cfg_schema{key_names = KeyNames,
+                                             key_values = KeyValues}) ->
     NVPairs = lists:zip(KeyNames, KeyValues),
     validate_set_list_keys(Ets, FullPath, NVPairs).
 

@@ -11,10 +11,14 @@
 
 -export([init/2, load_schema/1, load_schema/2]).
 
-%% Functions needed to extract items from our schema records.
--export([name/1, desc/1, children/3, action/1, node_type/1]).
+%% Functions needed to extract and set items in our schema records.
+-export([name/1, desc/1, children/3, action/1,
+         node_type/1, list_key_names/1, list_key_values/1,
+         set_list_key_values/2
+        ]).
 
-%% Functions to create nodes in the configuration tree
+%% Functions for users / application writers / schema designers to create
+%% nodes in their configuration tree
 -export([container/3, container/4,
          list/4, list/5,
          leaf_list/3, leaf_list/4,
@@ -57,30 +61,42 @@ name(#cfg_schema{name = Name}) -> Name.
 
 desc(#cfg_schema{desc = Desc}) -> Desc.
 
+list_key_names(#cfg_schema{key_names = KeyNames}) -> KeyNames.
+
+list_key_values(#cfg_schema{key_values = KeyValues}) -> KeyValues.
+
+set_list_key_values(#cfg_schema{} = S, Values) ->
+    S#cfg_schema{key_values = Values}.
+
 children(#cfg_schema{node_type = container, name = Name, path = Path, children = Cs}, Txn, _AddListItems) ->
     Children = expand_children(Cs, Txn),
     insert_full_path(Children, Path ++ [Name]);
-children(#cfg_schema{node_type = list, path = Path, name = Name} = S, Txn, AddListItems) ->
-    %% Children for list items are the list keys, and which one
-    %% depends on how far we got in gathering the list keys. We can
-    %% abuse the key_values field to track how many list keys we have,
-    %% and re-use the same #cfg_schema{} list item for all the list
-    %% item "children" so we still have it around for the real
-    %% children.
-    KeysSoFar = length(S#cfg_schema.key_value),
-    KeysNeeded = size(S#cfg_schema.key),
+children(#cfg_schema{node_type = List, path = Path, name = Name} = S, Txn, AddListItems) when List == list orelse List == new_list_item ->
+    %% Children for list items are the list keys plus maybe a wildcard
+    %% if it's a set command and we want to allow adding a new list
+    %% item (indicated by AddListItems = true).
+
+    %% If it has a compound key which one depends on how far we got in
+    %% gathering the list keys. We can abuse the key_values field to
+    %% track how many list keys we have, and re-use the same
+    %% #cfg_schema{} list item for all the list item "children" so we
+    %% still have it around for the real children.
+    KeysSoFar = length(S#cfg_schema.key_values),
+    KeysNeeded = length(S#cfg_schema.key_names),
     if KeysSoFar == KeysNeeded ->
+            io:format("cfg: all keys needed~n"),
             %% Now we have all the keys return the real child list.
             %% FIXME - remove the list keys from this list
             Children = expand_children(S#cfg_schema.children, Txn),
             insert_full_path(Children, Path ++ [Name]);
        true ->
+            io:format("cfg: more keys needed~n"),
             %% First time: Needed = 2, SoFar == 0, element = 1
             %% 2nd time:   Needed = 2, SoFar = 1, element = 2
             %% Last time:  Needed = 2, SoFar = 2
-            NextKey = element(KeysSoFar + 1, S#cfg_schema.key),
-            Keys = [NextKey | S#cfg_schema.key_value],
-            Template = S#cfg_schema{key_value = Keys},
+            NextKey = lists:nth(KeysSoFar + 1, S#cfg_schema.key_names),
+            Keys = [NextKey | S#cfg_schema.key_values],
+            Template = S#cfg_schema{key_values = Keys},
             ListKeys = cfg_txn:list_keys(Txn, S#cfg_schema.path),
             %% This is all the keys. We need to only show the current
             %% level, only unique values, and only items where the
@@ -90,15 +106,23 @@ children(#cfg_schema{node_type = list, path = Path, name = Name} = S, Txn, AddLi
             %% we don't have the previous key values
             %% FIXME: Fill the path in
             %% FIXME: include previous key parts somewhere
-            io:format("TEMPLATE ~p~n",[Template]),
+            io:format("TEMPLATE~n",[]),
+
+            TmpKeys = ["ListKey1A",
+                       "ListKey2A"],
+
+            KeysItems = lists:map(
+                          fun(K) ->
+                                  Template#cfg_schema{name = K}
+                          end, TmpKeys),
 
             %% The goal here is to return the set of possible values at this point, plus soemthing that will prompt for a new list item
             %% So we need to just convince the menu thingy we are a normal list of children, and we need to keep enough blah around so we can carry one afterwards
             case AddListItems of
                 true ->
-                    [Template#cfg_schema{node_type = new_list_item}];
+                    [Template#cfg_schema{node_type = new_list_item} | KeysItems];
                 false ->
-                    []
+                    KeysItems
             end
     end;
 children(_, _, _) ->
@@ -190,12 +214,12 @@ container(Name, Desc, Children, Opts) ->
 list(Name, Desc, Key, Children) ->
     list(Name, Desc, Key, Children, []).
 
-list(Name, Desc, Key, Children, Opts) when is_tuple(Key) ->
+list(Name, Desc, KeyNames, Children, Opts) when is_list(KeyNames) ->
     #cfg_schema{node_type = list,
                 name = Name,
                 desc = Desc,
                 children = Children,
-                key = Key,
+                key_names = KeyNames,
                 opts = Opts
                }.
 
