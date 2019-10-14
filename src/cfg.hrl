@@ -7,6 +7,9 @@
 %%% Created : 12 Sep 2019 by Sean Hinde <sean@Seans-MacBook.local>
 %%%-------------------------------------------------------------------
 
+-define(DBG(DATA), io:format("[~p:~p] ~p~n",[?MODULE, ?LINE, DATA])).
+-define(DBG(FORMAT, ARGS), io:format("[~p:~p] " ++ FORMAT,[?MODULE, ?LINE] ++ ARGS)).
+
 %% Record used to define config schema, used to drive cli completion,
 %% validation, upgrades.
 -record(cfg_schema,

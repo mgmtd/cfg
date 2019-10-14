@@ -26,7 +26,7 @@
         ]).
 
 
--export([transaction/0, exit_transaction/1, set/3]).
+-export([transaction/0, exit_transaction/1, set/3, commit/1]).
 
 -export_type([value/0, yang_value/0]).
 
@@ -84,13 +84,13 @@ children(#cfg_schema{node_type = List, path = Path, name = Name} = S, Txn, AddLi
     KeysSoFar = length(S#cfg_schema.key_values),
     KeysNeeded = length(S#cfg_schema.key_names),
     if KeysSoFar == KeysNeeded ->
-            io:format("cfg: all keys needed~n"),
+            ?DBG("cfg: all keys needed~n"),
             %% Now we have all the keys return the real child list.
             %% FIXME - remove the list keys from this list
             Children = expand_children(S#cfg_schema.children, Txn),
             insert_full_path(Children, Path ++ [Name]);
        true ->
-            io:format("cfg: more keys needed~n"),
+            ?DBG("cfg: more keys needed~n"),
             %% First time: Needed = 2, SoFar == 0, element = 1
             %% 2nd time:   Needed = 2, SoFar = 1, element = 2
             %% Last time:  Needed = 2, SoFar = 2
@@ -106,7 +106,7 @@ children(#cfg_schema{node_type = List, path = Path, name = Name} = S, Txn, AddLi
             %% we don't have the previous key values
             %% FIXME: Fill the path in
             %% FIXME: include previous key parts somewhere
-            io:format("TEMPLATE~n",[]),
+            ?DBG("TEMPLATE~n",[]),
 
             TmpKeys = ["ListKey1A",
                        "ListKey2A"],
@@ -163,9 +163,13 @@ exit_transaction(Txn) ->
     cfg_txn:exit_txn(Txn).
 
 set(Txn, SchemaPath, Value) ->
-    io:format("Setting path ~p to value ~p in Txn ~p~n",[SchemaPath, Value, Txn]),
-    cfg_txn:set(Txn, SchemaPath, Value),
-    {ok, "ok", Txn}.
+    ?DBG("Setting path ~p to value ~p in Txn ~p~n",[SchemaPath, Value, Txn]),
+    cfg_txn:set(Txn, SchemaPath, Value).
+
+commit(Txn) ->
+    ?DBG("committin~n",[]),
+    cfg_txn:commit(Txn).
+
 
 schema_list_to_path(SchemaItems) ->
     lists:map(fun(#cfg_schema{name = Name}) -> Name end, SchemaItems).
