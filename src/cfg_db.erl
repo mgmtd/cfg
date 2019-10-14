@@ -10,7 +10,9 @@
 
 -include("cfg.hrl").
 
--export([init/2, transaction/1, read/1, write/1, copy_to_ets/0]).
+-export([init/2, transaction/1, copy_to_ets/0]).
+
+-export([insert_path_items/3, check_conflict/3]).
 
 -export([cfg_list_to_tree/1]).
 
@@ -34,13 +36,18 @@ transaction(Fun) when is_function(Fun) ->
     BackendMod = backend(),
     BackendMod:transaction(Fun).
 
-read(Key) ->
+read(permanent, Key) ->
     BackendMod = backend(),
-    BackendMod:read(Key).
+    BackendMod:read(Key);
+read({ets, Ets}, Path) ->
+    ets:lookup(Ets, Path).
 
-write(#cfg{} = Cfg) ->
+write(permanent, #cfg{} = Cfg) ->
     BackendMod = backend(),
-    BackendMod:write(Cfg).
+    BackendMod:write(Cfg);
+write({ets, Ets}, #cfg{} = Cfg) ->
+    ets:insert(Ets, Cfg).
+
 
 copy_to_ets() ->
     BackendMod = backend(),
@@ -56,6 +63,157 @@ backend() ->
 
 backend_mod(mnesia) -> cfg_backend_mnesia;
 backend_mod(config) -> cfg_backend_config.
+
+
+%% Insert all the database items required for a single configuration
+%% item.  One entry is required for each level in the path plus a few
+%% more for list items.
+%%
+%% If the entry already exists, but is of a different type that's bad:
+%% it means the schema used to create the database was different to
+%% the schema used to parse the command. Bail if this happens.
+%%
+%% List items. Are awkward. We need to generate several database
+%% entries for the list item, one for each of the list keys, and
+%% potentially one for a value. We need these for easy lookup /
+%% subscribe etc.
+%%
+%% e.g. {set, ["a",{"b","c"},"name"], "Val"} leads to these database entries:
+%%
+%% #cfg{node_type = list, path = ["a"], value = {"keyb_name", "keyc_name"}}
+%% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "keyb_name"], value = "b"}
+%% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "keyc_name"], value = "c"}
+%% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "name"],     value = "Val"}
+%%
+%% The path we get here is a list of schema items, normally not
+%% including any values. A few options to geth the list key values to here:
+%%
+%% 1. Have cfg_lookup create multiple entries for all the parts of a list entry
+%% 2. Include the values of list keys in the #cfg_schema{node_type=list} item
+%% 3. Hm
+%%
+%% Insert a single entry in the database.
+-spec insert_path_items(ets:tid(), [#cfg_schema{}], term()) -> ok.
+insert_path_items(Db, Is, Value) ->
+    insert_path_items(Db, Is, Value, []).
+
+-spec insert_path_items(ets:tid(), [#cfg_schema{}], term(), list()) -> ok.
+insert_path_items(Db, [I | Is], Value, Path) ->
+    case I of
+        #cfg_schema{node_type = container, name = Name} ->
+            FullPath = Path ++ [Name],
+            Cfg = schema_to_cfg(I, FullPath, undefined),
+            write(Db, Cfg),
+            insert_path_items(Db, Is, Value, FullPath);
+
+        %% List items
+        #cfg_schema{node_type = list, name = Name,
+                    key_names = Keys, key_values = KVs} ->
+            FullPath = Path ++ [Name],
+            ListItemCfg = schema_to_cfg(I, FullPath, Keys),
+            write(Db, ListItemCfg),
+            ListItemsPath = FullPath ++ [list_to_tuple(KVs)],
+            insert_list_keys(Db, ListItemsPath, I),
+            insert_path_items(Db, Is, Value, ListItemsPath);
+
+        %% Leafs of both kinds
+        #cfg_schema{node_type = Leaf, name = Name} when Leaf == leaf;
+                                                        Leaf == leaf_list ->
+            FullPath = Path ++ [Name],
+            Cfg = schema_to_cfg(I, FullPath, Value),
+            write(Db, Cfg)
+    end.
+
+insert_list_keys(Db, Path, #cfg_schema{key_names = KeyNames,
+                                        key_values = KeyValues}) ->
+    NVPairs = lists:zip(KeyNames, KeyValues),
+    lists:foreach(fun({Name, Value}) ->
+                          Cfg = #cfg{name = Name,
+                                     path = Path ++ [Name],
+                                     node_type = leaf,
+                                     value = Value},
+                          write(Db, Cfg)
+                  end, NVPairs).
+
+%% Traverse a path to be inserted in the Db and check whether any
+%% existing nodes have a conflicting type.
+check_conflict(Db, Is, Value) ->
+    check_conflict(Db, Is, Value, []).
+
+check_conflict(Db, [I|Is], Value, Path) ->
+    case I of
+        #cfg_schema{node_type = container, name = Name} ->
+            FullPath = Path ++ [Name],
+            case read(Db, FullPath) of
+                [] ->
+                    ok;
+                [#cfg{node_type = container, name = Name}] ->
+                    check_conflict(Db, Is, Value, FullPath);
+                [#cfg{}] ->
+                    {error, "schema conflict"}
+            end;
+        #cfg_schema{node_type = list, name = Name,
+                    key_values = KVs} ->
+            FullPath = Path ++ [Name],
+            case read(Db, FullPath) of
+                [] ->
+                    ok;
+                [#cfg{node_type = list, name = Name}] ->
+                    case validate_set_list(Db, FullPath, I) of
+                        ok ->
+                            ListItemPath = FullPath ++ [list_to_tuple(KVs)],
+                            check_conflict(Db, Is, Value, ListItemPath);
+                        {error, Reason} ->
+                            {error, Reason}
+                    end;
+                [#cfg{}] ->
+                    {error, "list item schema conflict"}
+            end;
+        #cfg_schema{node_type = Leaf, name = Name} when Leaf == leaf;
+                                                        Leaf == leaf_list ->
+            FullPath = Path ++ [Name],
+            case read(Db, FullPath) of
+                [] ->
+                    ok;
+                [#cfg{node_type = Leaf}] ->
+                    ok;
+                [_] ->
+                    {error, "leaf item schema conflict"}
+            end
+    end.
+
+
+%% Ensure the entries for the list keys exist. We already proved there
+%% is an entry for the list item itself, so these leafs *must*
+%% exist. Work checking though.
+validate_set_list(Db, FullPath, #cfg_schema{key_names = KeyNames,
+                                            key_values = KeyValues}) ->
+    NVPairs = lists:zip(KeyNames, KeyValues),
+    validate_set_list_keys(Db, FullPath, NVPairs).
+
+validate_set_list_keys(_Db, _FullPath, []) ->
+    ok;
+validate_set_list_keys(Db, Path, [{Name, _Value}|Ks]) ->
+    FullPath = Path ++ Name,
+    case read(Db, FullPath) of
+        [] ->
+            {error, "Missing list key entry"};
+        [#cfg{node_type = leaf}] ->
+            validate_set_list_keys(Db, Path, Ks);
+        [_] ->
+            {error, "Invalid existing list key entry"}
+    end.
+
+%% Create a cfg record sutable to insert in the database from the schema
+%% record and the full path and value.
+schema_to_cfg(#cfg_schema{} = C, Path, Value) ->
+    #cfg{node_type = C#cfg_schema.node_type,
+         name = C#cfg_schema.name,
+         path = Path,
+         value = Value
+        }.
+
+
 
 %%-------------------------------------------------------------------
 %% @doc Construct a tree of configuration items from a flat list of

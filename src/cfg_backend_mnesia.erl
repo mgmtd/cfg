@@ -15,11 +15,11 @@
 -export([copy_to_ets/0]).
 
 -export([transaction/1,
-         read/2,
-         write/2,
-         delete/2,
-         first/1,
-         next/2
+         read/1,
+         write/1,
+         delete/1,
+         first/0,
+         next/1
         ]).
 
 %%--------------------------------------------------------------------
@@ -45,21 +45,27 @@ init_db(Path, Nodes) ->
     ok = mnesia:wait_for_tables([cfg], 30000).
 
 transaction(Fun) ->
-    mnesia:transaction(Fun).
+    case mnesia:transaction(Fun) of
+        {atomic, ok} ->
+            ok;
+        Err ->
+            ?DBG("Transaction errro ~p",[Err]),
+            {error, "FAIL"}
+    end.
 
-read(_Txn, Key) ->
+read(Key) ->
     mnesia:read(cfg, Key).
 
-write(_Txn, #cfg{} = Cfg) ->
+write(#cfg{} = Cfg) ->
     mnesia:write(cfg, Cfg, write).
 
-delete(_Txn, Key) ->
+delete(Key) ->
     mnesia:delete(cfg, Key).
 
-first(_Txn) ->
+first() ->
     mnesia:first(cfg).
 
-next(_Txn, Key) ->
+next(Key) ->
     mnesia:next(cfg, Key).
 
 -spec copy_to_ets() -> ets:tid().

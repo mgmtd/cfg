@@ -34,6 +34,18 @@ exit_txn(#cfg_txn{ets_copy = EtsCopy}) ->
     ok.
 
 
+%% @doc commit the operations stored up in the configuration transaction
+commit(#cfg_txn{ets_copy = Copy, ops = Ops}) ->
+    ?DBG("cfg_txn: committing~n",[]),
+    Fun = fun() ->
+                  lists:foreach(fun({set, Path, Value}) ->
+                                    cfg_db:insert_path_items(permanent, Path, Value);
+                               (_) ->
+                                    ok
+                            end, Ops)
+          end,
+    cfg_db:transaction(Fun).
+
 -spec get(#cfg_txn{}, cfg:path()) -> {ok, cfg:value()} | undefined.
 get(#cfg_txn{ets_copy = Copy}, Path) ->
     case ets:lookup(Copy, Path) of
@@ -45,164 +57,18 @@ get(#cfg_txn{ets_copy = Copy}, Path) ->
 
 % -spec set(#cfg_txn{}, [#cfg_schema{}], term()) -> ok | {error, String()}.
 set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
-    case check_conflict(Copy, Path, Value, []) of
+    case cfg_db:check_conflict({ets, Copy}, Path, Value) of
         ok ->
-            set_path_items(Copy, Path, Value, []),
+            cfg_db:insert_path_items({ets, Copy}, Path, Value),
             io:format("cfg_txn:set ~p~n",[ets:tab2list(Copy)]),
-            Txn#cfg_txn{ops = [{set, Path, Value} | Ops]};
+            {ok, Txn#cfg_txn{ops = [{set, Path, Value} | Ops]}};
         {error, Reason} ->
             error_logger:error_msg(Reason),
-            Txn
+            {error, Reason}
     end.
 
 list_keys(#cfg_txn{ets_copy = Copy}, Path) ->
     ets:select(Copy, [{#cfg{path = Path ++ ['$1'], _ = '_'}, [], ['$1']}]).
 
 
-%% Insert all the database items required for a single configuration
-%% item.  One entry is required for each level in the path plus a few
-%% more for list items.
-%%
-%% If the entry already exists, but is of a different type that's bad:
-%% it means the schema used to create the database was different to
-%% the schema used to parse the command. Bail if this happens.
-%%
-%% List items. Are awkward. We need to generate several database
-%% entries for the list item, one for each of the list keys, and
-%% potentially one for a value. We need these for easy lookup /
-%% subscribe etc.
-%%
-%% e.g. {set, ["a",{"b","c"},"name"], "Val"} leads to these database entries:
-%%
-%% #cfg{node_type = list, path = ["a"], value = {"keyb_name", "keyc_name"}}
-%% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "keyb_name"], value = "b"}
-%% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "keyc_name"], value = "c"}
-%% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "name"],     value = "Val"}
-%%
-%% The path we get here is a list of schema items, normally not
-%% including any values. A few options to geth the list key values to here:
-%%
-%% 1. Have cfg_lookup create multiple entries for all the parts of a list entry
-%% 2. Include the values of list keys in the #cfg_schema{node_type=list} item
-%% 3. Hm
-%%
-%% Insert a single entry in the database.
--spec set_path_items(ets:tid(), [#cfg_schema{}], term(), list()) -> ok.
-set_path_items(Ets, [I | Is], Value, Path) ->
-    case I of
-        #cfg_schema{node_type = container, name = Name} ->
-            FullPath = Path ++ [Name],
-            Cfg = schema_to_cfg(I, FullPath, undefined),
-            ets:insert(Ets, Cfg),
-            set_path_items(Ets, Is, Value, FullPath);
-
-        %% List items
-        #cfg_schema{node_type = list, name = Name,
-                    key_names = Keys, key_values = KVs} ->
-            FullPath = Path ++ [Name],
-            ListItemCfg = schema_to_cfg(I, FullPath, Keys),
-            ets:insert(Ets, ListItemCfg),
-            ListItemsPath = FullPath ++ [list_to_tuple(KVs)],
-            insert_list_keys(Ets, ListItemsPath, I),
-            set_path_items(Ets, Is, Value, ListItemsPath);
-
-        %% Leafs of both kinds
-        #cfg_schema{node_type = Leaf, name = Name} when Leaf == leaf;
-                                                        Leaf == leaf_list ->
-            FullPath = Path ++ [Name],
-            Cfg = schema_to_cfg(I, FullPath, Value),
-            ets:insert(Ets, Cfg)
-    end.
-
-insert_list_keys(Ets, Path, #cfg_schema{key_names = KeyNames,
-                                        key_values = KeyValues}) ->
-    NVPairs = lists:zip(KeyNames, KeyValues),
-    lists:foreach(fun({Name, Value}) ->
-                          Cfg = #cfg{name = Name,
-                                     path = Path ++ [Name],
-                                     node_type = leaf,
-                                     value = Value},
-                          ets:insert(Ets, Cfg)
-                  end, NVPairs).
-
-check_conflict(Ets, [I|Is], Value, Path) ->
-    case I of
-        #cfg_schema{node_type = container, name = Name} ->
-            FullPath = Path ++ [Name],
-            case ets:lookup(Ets, FullPath) of
-                [] ->
-                    ok;
-                [#cfg{node_type = container, name = Name}] ->
-                    check_conflict(Ets, Is, Value, FullPath);
-                [#cfg{}] ->
-                    {error, "schema conflict"}
-            end;
-        #cfg_schema{node_type = list, name = Name,
-                    key_values = KVs} ->
-            FullPath = Path ++ [Name],
-            case ets:lookup(Ets, FullPath) of
-                [] ->
-                    ok;
-                [#cfg{node_type = list, name = Name}] ->
-                    case validate_set_list(Ets, FullPath, I) of
-                        ok ->
-                            ListItemPath = FullPath ++ [list_to_tuple(KVs)],
-                            check_conflict(Ets, Is, Value, ListItemPath);
-                        {error, Reason} ->
-                            {error, Reason}
-                    end;
-                [#cfg{}] ->
-                    {error, "list item schema conflict"}
-            end;
-        #cfg_schema{node_type = Leaf, name = Name} when Leaf == leaf;
-                                                        Leaf == leaf_list ->
-            FullPath = Path ++ [Name],
-            case ets:lookup(Ets, FullPath) of
-                [] ->
-                    ok;
-                [#cfg{node_type = Leaf}] ->
-                    ok;
-                [_] ->
-                    {error, "leaf item schema conflict"}
-            end
-    end.
-
-%% Ensure the entries for the list keys exist. We already proved there
-%% is an entry for the list item itself, so these leafs *must*
-%% exist. Work checking though.
-validate_set_list(Ets, FullPath, #cfg_schema{key_names = KeyNames,
-                                             key_values = KeyValues}) ->
-    NVPairs = lists:zip(KeyNames, KeyValues),
-    validate_set_list_keys(Ets, FullPath, NVPairs).
-
-validate_set_list_keys(Ets, FullPath, []) ->
-    ok;
-validate_set_list_keys(Ets, Path, [{Name, Value}|Ks]) ->
-    FullPath = Path ++ Name,
-    case ets:lookup(Ets, FullPath) of
-        [] ->
-            {error, "Missing list key entry"};
-        [#cfg{node_type = leaf}] ->
-            validate_set_list_keys(Ets, Path, Ks);
-        [_] ->
-            {error, "Invalid existing list key entry"}
-    end.
-
-commit(#cfg_txn{ets_copy = Copy, ops = Ops}) ->
-    case cfg_db:apply_ops(Ops) of
-        ok ->
-            ets:delete(Copy),
-            ok;
-        Err ->
-            ets:delete(Copy),
-            Err
-    end.
-
-
-schema_to_cfg(#cfg_schema{} = C, Path, Value) ->
-    #cfg{node_type = C#cfg_schema.node_type,
-         name = C#cfg_schema.name,
-         path = Path,
-         value = Value
-        }.
 
