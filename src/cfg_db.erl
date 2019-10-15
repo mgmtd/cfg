@@ -80,7 +80,8 @@ backend_mod(config) -> cfg_backend_config.
 %%
 %% e.g. {set, ["a",{"b","c"},"name"], "Val"} leads to these database entries:
 %%
-%% #cfg{node_type = list, path = ["a"], value = {"keyb_name", "keyc_name"}}
+%% #cfg{node_type = list, path = ["a"], value = ["keyb_name", "keyc_name"]}
+%% #cfg{node_type = list, path = ["a", {"b", "c"}], value = ["keyb_name", "keyc_name"]}
 %% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "keyb_name"], value = "b"}
 %% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "keyc_name"], value = "c"}
 %% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "name"],     value = "Val"}
@@ -111,8 +112,16 @@ insert_path_items(Db, [I | Is], Value, Path) ->
                     key_names = Keys, key_values = KVs} ->
             FullPath = Path ++ [Name],
             ListItemCfg = schema_to_cfg(I, FullPath, Keys),
+
+            %% Create a top level entry for the list schema itself
             write(Db, ListItemCfg),
             ListItemsPath = FullPath ++ [list_to_tuple(KVs)],
+
+            %% Create an entry for the list key itself
+            ListKeyCfg = schema_to_cfg(I, ListItemsPath, Keys),
+            write(Db, ListKeyCfg),
+
+            %% Create leaf entries for each of the list keys
             insert_list_keys(Db, ListItemsPath, I),
             insert_path_items(Db, Is, Value, ListItemsPath);
 
@@ -138,6 +147,7 @@ insert_list_keys(Db, Path, #cfg_schema{key_names = KeyNames,
 %% Traverse a path to be inserted in the Db and check whether any
 %% existing nodes have a conflicting type.
 check_conflict(Db, Is, Value) ->
+    ?DBG("Check Conflict ~p~n",[Is]),
     check_conflict(Db, Is, Value, []).
 
 check_conflict(Db, [I|Is], Value, Path) ->
@@ -159,12 +169,21 @@ check_conflict(Db, [I|Is], Value, Path) ->
                 [] ->
                     ok;
                 [#cfg{node_type = list, name = Name}] ->
-                    case validate_set_list(Db, FullPath, I) of
-                        ok ->
-                            ListItemPath = FullPath ++ [list_to_tuple(KVs)],
-                            check_conflict(Db, Is, Value, ListItemPath);
-                        {error, Reason} ->
-                            {error, Reason}
+                    ?DBG("List exists ~p~n",[FullPath]),
+                    ListItemPath = FullPath ++ [list_to_tuple(KVs)],
+                    ?DBG("Check List keys ~p~n",[ListItemPath]),
+                    case read(Db, ListItemPath) of
+                        [] ->
+                            check_conflict(Db, Is, Value);
+                        [#cfg{node_type = list, name = ListKeyNames}] ->
+                            case validate_set_list(Db, ListItemPath, I) of
+                                ok ->
+                                    check_conflict(Db, Is, Value, ListItemPath);
+                                {error, Reason} ->
+                                    {error, Reason}
+                            end;
+                        [#cfg{}] ->
+                            {error, "list item not marked as list"}
                     end;
                 [#cfg{}] ->
                     {error, "list item schema conflict"}
@@ -194,9 +213,10 @@ validate_set_list(Db, FullPath, #cfg_schema{key_names = KeyNames,
 validate_set_list_keys(_Db, _FullPath, []) ->
     ok;
 validate_set_list_keys(Db, Path, [{Name, _Value}|Ks]) ->
-    FullPath = Path ++ Name,
+    FullPath = Path ++ [Name],
     case read(Db, FullPath) of
         [] ->
+            ?DBG("MISSING list key ~p~n",[FullPath]),
             {error, "Missing list key entry"};
         [#cfg{node_type = leaf}] ->
             validate_set_list_keys(Db, Path, Ks);

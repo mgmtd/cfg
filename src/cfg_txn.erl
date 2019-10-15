@@ -60,10 +60,10 @@ set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
     case cfg_db:check_conflict({ets, Copy}, Path, Value) of
         ok ->
             cfg_db:insert_path_items({ets, Copy}, Path, Value),
-            io:format("cfg_txn:set ~p~n",[ets:tab2list(Copy)]),
+            ?DBG("ets content: ~p~n",[ets:tab2list(Copy)]),
             {ok, Txn#cfg_txn{ops = [{set, Path, Value} | Ops]}};
         {error, Reason} ->
-            error_logger:error_msg(Reason),
+            ?DBG(Reason),
             {error, Reason}
     end.
 
