@@ -71,7 +71,8 @@ set_list_key_values(#cfg_schema{} = S, Values) ->
 children(#cfg_schema{node_type = container, name = Name, path = Path, children = Cs}, Txn, _AddListItems) ->
     Children = expand_children(Cs, Txn),
     insert_full_path(Children, Path ++ [Name]);
-children(#cfg_schema{node_type = List, path = Path, name = Name} = S, Txn, AddListItems) when List == list orelse List == new_list_item ->
+children(#cfg_schema{node_type = List, path = Path, name = Name, key_names = KeyNames} = S,
+         Txn, AddListItems) when List == list orelse List == new_list_item ->
     %% Children for list items are the list keys plus maybe a wildcard
     %% if it's a set command and we want to allow adding a new list
     %% item (indicated by AddListItems = true).
@@ -82,19 +83,20 @@ children(#cfg_schema{node_type = List, path = Path, name = Name} = S, Txn, AddLi
     %% #cfg_schema{} list item for all the list item "children" so we
     %% still have it around for the real children.
     KeysSoFar = length(S#cfg_schema.key_values),
-    KeysNeeded = length(S#cfg_schema.key_names),
+    KeysNeeded = length(KeyNames),
     if KeysSoFar == KeysNeeded ->
             ?DBG("cfg: all keys needed~n"),
             %% Now we have all the keys return the real child list.
             %% FIXME - remove the list keys from this list
             Children = expand_children(S#cfg_schema.children, Txn),
-            insert_full_path(Children, Path ++ [Name]);
+            Filtered = filter_list_key_leafs(Children, KeyNames),
+            insert_full_path(Filtered, Path ++ [Name]);
        true ->
             ?DBG("cfg: more keys needed~n"),
             %% First time: Needed = 2, SoFar == 0, element = 1
             %% 2nd time:   Needed = 2, SoFar = 1, element = 2
             %% Last time:  Needed = 2, SoFar = 2
-            NextKey = lists:nth(KeysSoFar + 1, S#cfg_schema.key_names),
+            NextKey = lists:nth(KeysSoFar + 1, KeyNames),
             Keys = [NextKey | S#cfg_schema.key_values],
             Template = S#cfg_schema{key_values = Keys},
             ListKeys = cfg_txn:list_keys(Txn, S#cfg_schema.path),
@@ -116,8 +118,11 @@ children(#cfg_schema{node_type = List, path = Path, name = Name} = S, Txn, AddLi
                                   Template#cfg_schema{name = K}
                           end, TmpKeys),
 
-            %% The goal here is to return the set of possible values at this point, plus soemthing that will prompt for a new list item
-            %% So we need to just convince the menu thingy we are a normal list of children, and we need to keep enough blah around so we can carry one afterwards
+            %% The goal here is to return the set of possible values
+            %% at this point, plus something that will prompt for a
+            %% new list item. We need to just convince the menu thingy
+            %% we are a normal list of children, and we need to keep
+            %% enough blah around so we can carry on afterwards
             case AddListItems of
                 true ->
                     [Template#cfg_schema{node_type = new_list_item} | KeysItems];
@@ -146,6 +151,11 @@ insert_full_path(Children, Path) ->
     lists:map(fun(#cfg_schema{} = S) ->
                       S#cfg_schema{path = Path}
               end, Children).
+
+filter_list_key_leafs(Children, KeyNames) ->
+    lists:filter(fun(#cfg_schema{name = Name}) ->
+                         not lists:member(Name, KeyNames)
+                 end, Children).
 
 %%--------------------------------------------------------------------
 %% Configuration session transaction API
