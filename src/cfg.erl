@@ -99,7 +99,7 @@ children(#cfg_schema{node_type = List, path = Path, name = Name, key_names = Key
             NextKey = lists:nth(KeysSoFar + 1, KeyNames),
             Keys = [NextKey | S#cfg_schema.key_values],
             Template = S#cfg_schema{key_values = Keys},
-            ListKeys = cfg_txn:list_keys(Txn, S#cfg_schema.path),
+            ListKeys = cfg_txn:list_keys(Txn, Path ++ [Name]),
             %% This is all the keys. We need to only show the current
             %% level, only unique values, and only items where the
             %% previous key parts match
@@ -108,15 +108,12 @@ children(#cfg_schema{node_type = List, path = Path, name = Name, key_names = Key
             %% we don't have the previous key values
             %% FIXME: Fill the path in
             %% FIXME: include previous key parts somewhere
-            ?DBG("TEMPLATE~n",[]),
-
-            TmpKeys = ["ListKey1A",
-                       "ListKey2A"],
 
             KeysItems = lists:map(
                           fun(K) ->
-                                  Template#cfg_schema{name = K}
-                          end, TmpKeys),
+                                  KName = element(KeysSoFar + 1, K),
+                                  Template#cfg_schema{name = KName}
+                          end, ListKeys),
 
             %% The goal here is to return the set of possible values
             %% at this point, plus something that will prompt for a

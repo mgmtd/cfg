@@ -48,7 +48,6 @@ write(permanent, #cfg{} = Cfg) ->
 write({ets, Ets}, #cfg{} = Cfg) ->
     ets:insert(Ets, Cfg).
 
-
 copy_to_ets() ->
     BackendMod = backend(),
     BackendMod:copy_to_ets().
