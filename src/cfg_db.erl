@@ -14,7 +14,7 @@
 
 -export([insert_path_items/3, check_conflict/3]).
 
--export([cfg_list_to_tree/1]).
+-export([cfg_list_to_tree/1, simplify_tree/1, schema_path_to_key/1]).
 
 %%--------------------------------------------------------------------
 %% @doc Wrapper functions around the operations towards the chosen storage
@@ -97,27 +97,28 @@ backend_mod(config) -> cfg_backend_config.
 insert_path_items(Db, Is, Value) ->
     insert_path_items(Db, Is, Value, []).
 
--spec insert_path_items(ets:tid(), [#cfg_schema{}], term(), list()) -> ok.
+-spec insert_path_items(ets:tid(), [#{rec_type := schema}], term(), list()) -> ok.
 insert_path_items(Db, [I | Is], Value, Path) ->
     case I of
-        #cfg_schema{node_type = container, name = Name} ->
+        #{rec_type := schema, node_type := container, name := Name} ->
             FullPath = Path ++ [Name],
             Cfg = schema_to_cfg(I, FullPath, undefined),
             write(Db, Cfg),
             insert_path_items(Db, Is, Value, FullPath);
 
         %% List items
-        #cfg_schema{node_type = list, name = Name,
-                    key_names = Keys, key_values = KVs} ->
+        #{rec_type := schema, node_type := list, name := Name,
+          key_names := Keys, key_values := KVs} ->
             FullPath = Path ++ [Name],
+            Key = list_to_tuple(KVs),
             ListItemCfg = schema_to_cfg(I, FullPath, Keys),
 
             %% Create a top level entry for the list schema itself
             write(Db, ListItemCfg),
-            ListItemsPath = FullPath ++ [list_to_tuple(KVs)],
+            ListItemsPath = FullPath ++ [Key],
 
             %% Create an entry for the list key itself
-            ListKeyCfg = schema_to_cfg(I, ListItemsPath, Keys),
+            ListKeyCfg = schema_list_key_to_cfg(I, ListItemsPath, Key),
             write(Db, ListKeyCfg),
 
             %% Create leaf entries for each of the list keys
@@ -125,15 +126,16 @@ insert_path_items(Db, [I | Is], Value, Path) ->
             insert_path_items(Db, Is, Value, ListItemsPath);
 
         %% Leafs of both kinds
-        #cfg_schema{node_type = Leaf, name = Name} when Leaf == leaf;
-                                                        Leaf == leaf_list ->
+        #{rec_type := schema, node_type := Leaf, name := Name}
+          when Leaf == leaf;
+               Leaf == leaf_list ->
             FullPath = Path ++ [Name],
             Cfg = schema_to_cfg(I, FullPath, Value),
             write(Db, Cfg)
     end.
 
-insert_list_keys(Db, Path, #cfg_schema{key_names = KeyNames,
-                                        key_values = KeyValues}) ->
+insert_list_keys(Db, Path, #{rec_type := schema, key_names := KeyNames,
+                                        key_values := KeyValues}) ->
     NVPairs = lists:zip(KeyNames, KeyValues),
     lists:foreach(fun({Name, Value}) ->
                           Cfg = #cfg{name = Name,
@@ -151,7 +153,7 @@ check_conflict(Db, Is, Value) ->
 
 check_conflict(Db, [I|Is], Value, Path) ->
     case I of
-        #cfg_schema{node_type = container, name = Name} ->
+        #{rec_type := schema, node_type := container, name := Name} ->
             FullPath = Path ++ [Name],
             case read(Db, FullPath) of
                 [] ->
@@ -161,8 +163,8 @@ check_conflict(Db, [I|Is], Value, Path) ->
                 [#cfg{}] ->
                     {error, "schema conflict"}
             end;
-        #cfg_schema{node_type = list, name = Name,
-                    key_values = KVs} ->
+        #{rec_type := schema, node_type := list, name := Name,
+          key_values := KVs} ->
             FullPath = Path ++ [Name],
             case read(Db, FullPath) of
                 [] ->
@@ -187,8 +189,9 @@ check_conflict(Db, [I|Is], Value, Path) ->
                 [#cfg{}] ->
                     {error, "list item schema conflict"}
             end;
-        #cfg_schema{node_type = Leaf, name = Name} when Leaf == leaf;
-                                                        Leaf == leaf_list ->
+        #{rec_type := schema, node_type := Leaf, name := Name} when
+              Leaf == leaf;
+              Leaf == leaf_list ->
             FullPath = Path ++ [Name],
             case read(Db, FullPath) of
                 [] ->
@@ -225,14 +228,25 @@ validate_set_list_keys(Db, Path, [{Name, _Value}|Ks]) ->
 
 %% Create a cfg record sutable to insert in the database from the schema
 %% record and the full path and value.
-schema_to_cfg(#cfg_schema{} = C, Path, Value) ->
-    #cfg{node_type = C#cfg_schema.node_type,
-         name = C#cfg_schema.name,
+schema_to_cfg(#{rec_type := schema, node_type := NodeType, name := Name}, Path, Value) ->
+    #cfg{node_type = NodeType,
+         name = Name,
          path = Path,
          value = Value
         }.
 
+schema_list_key_to_cfg(#{rec_type := schema, key_names := KNs,
+                         node_type := NodeType} = C, Path, Key) ->
+    #cfg{node_type = NodeType,
+         name = Key,
+         path = Path,
+         value = KNs
+        }.
 
+schema_path_to_key(Path) ->
+    lists:map(fun(#{rec_type := schema, name := Name}) ->
+                      Name
+              end, Path).
 
 %%-------------------------------------------------------------------
 %% @doc Construct a tree of configuration items from a flat list of
@@ -255,6 +269,7 @@ cfg_list_to_tree([], Z) ->
 
 % Insert an item in the zntree. Z points to the children of the root node
 zntree_insert_item(#cfg{path = Path} = Cfg, Z) ->
+    ?DBG("insert : ~p~n",[Path]),
     Z1 = zntree_node_at_path(Path, Z),
     Z2 = cfg_zntrees:insert(Cfg, Z1),
     %% Z2 now points to our new node. Point it back to the root node ready
@@ -290,6 +305,7 @@ zntree_root(Z) ->
 %% Convert the zntree of our cfg records into a tree of #cfg{} records
 -spec zntree_to_cfg_tree(cfg_zntrees:zntree()) -> list().
 zntree_to_cfg_tree(Zntree) ->
+    ?DBG("zn:~p~n",[Zntree]),
     zntree_to_cfg_tree(Zntree, []).
 
 zntree_to_cfg_tree({_Thread, {_Left, _Right = []}}, Acc) ->
@@ -304,5 +320,17 @@ zntree_to_cfg_tree(Z, Acc) ->
         #cfg{node_type = leaf_list} = Cfg ->
             zntree_to_cfg_tree(cfg_zntrees:right(Z), [Cfg | Acc]);
         #cfg{node_type = list} = Cfg ->
-            zntree_to_cfg_tree(cfg_zntrees:right(Z), [Cfg | Acc])
+            Acc1 = [Cfg#cfg{value = zntree_to_cfg_tree(cfg_zntrees:children(Z), [])} | Acc],
+            zntree_to_cfg_tree(cfg_zntrees:right(Z), Acc1)
     end.
+
+simplify_tree([#cfg{node_type = container, name = Name, value = Children} |Ts]) ->
+    [{Name, simplify_tree(Children)}|simplify_tree(Ts)];
+simplify_tree([#cfg{node_type = list, name = Name, value = Children} |Ts]) ->
+    [{Name, simplify_tree(Children)}|simplify_tree(Ts)];
+simplify_tree([#cfg{name = Name, value = Value} | Cfgs]) ->
+    [{Name, {value, Value}}|simplify_tree(Cfgs)];
+simplify_tree([]) ->
+    [].
+
+

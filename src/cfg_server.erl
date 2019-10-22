@@ -42,7 +42,6 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 load_schema(NS, ParsedSchema) ->
-    io:format("Trees ~p~n",[ParsedSchema]),
     gen_server:call(?MODULE, {load_schema, NS, ParsedSchema}).
 
 

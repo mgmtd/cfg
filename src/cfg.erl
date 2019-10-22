@@ -11,12 +11,6 @@
 
 -export([init/2, load_schema/1, load_schema/2]).
 
-%% Functions needed to extract and set items in our schema records.
--export([name/1, desc/1, children/3, action/1,
-         node_type/1, list_key_names/1, list_key_values/1,
-         set_list_key_values/2
-        ]).
-
 %% Functions for users / application writers / schema designers to create
 %% nodes in their configuration tree
 -export([container/3, container/4,
@@ -26,7 +20,7 @@
         ]).
 
 
--export([transaction/0, exit_transaction/1, set/3, commit/1]).
+-export([transaction/0, exit_transaction/1, set/3, show/2, commit/1]).
 
 -export_type([value/0, yang_value/0]).
 
@@ -53,106 +47,6 @@
 init(Backend, Opts) when Backend == mnesia ->
     cfg_db:init(Backend, Opts).
 
-%%--------------------------------------------------------------------
-%% The callbacks needed for the generic expander to know enough
-%% about our #cfg_schema{}s
-%% --------------------------------------------------------------------
-name(#cfg_schema{name = Name}) -> Name.
-
-desc(#cfg_schema{desc = Desc}) -> Desc.
-
-list_key_names(#cfg_schema{key_names = KeyNames}) -> KeyNames.
-
-list_key_values(#cfg_schema{key_values = KeyValues}) -> KeyValues.
-
-set_list_key_values(#cfg_schema{} = S, Values) ->
-    S#cfg_schema{key_values = Values}.
-
-children(#cfg_schema{node_type = container, name = Name, path = Path, children = Cs}, Txn, _AddListItems) ->
-    Children = expand_children(Cs, Txn),
-    insert_full_path(Children, Path ++ [Name]);
-children(#cfg_schema{node_type = List, path = Path, name = Name, key_names = KeyNames} = S,
-         Txn, AddListItems) when List == list orelse List == new_list_item ->
-    %% Children for list items are the list keys plus maybe a wildcard
-    %% if it's a set command and we want to allow adding a new list
-    %% item (indicated by AddListItems = true).
-
-    %% If it has a compound key which one depends on how far we got in
-    %% gathering the list keys. We can abuse the key_values field to
-    %% track how many list keys we have, and re-use the same
-    %% #cfg_schema{} list item for all the list item "children" so we
-    %% still have it around for the real children.
-    KeysSoFar = length(S#cfg_schema.key_values),
-    KeysNeeded = length(KeyNames),
-    if KeysSoFar == KeysNeeded ->
-            ?DBG("cfg: all keys needed~n"),
-            %% Now we have all the keys return the real child list.
-            %% FIXME - remove the list keys from this list
-            Children = expand_children(S#cfg_schema.children, Txn),
-            Filtered = filter_list_key_leafs(Children, KeyNames),
-            insert_full_path(Filtered, Path ++ [Name]);
-       true ->
-            ?DBG("cfg: more keys needed~n"),
-            %% First time: Needed = 2, SoFar == 0, element = 1
-            %% 2nd time:   Needed = 2, SoFar = 1, element = 2
-            %% Last time:  Needed = 2, SoFar = 2
-            NextKey = lists:nth(KeysSoFar + 1, KeyNames),
-            Keys = [NextKey | S#cfg_schema.key_values],
-            Template = S#cfg_schema{key_values = Keys},
-            ListKeys = cfg_txn:list_keys(Txn, Path ++ [Name]),
-            %% This is all the keys. We need to only show the current
-            %% level, only unique values, and only items where the
-            %% previous key parts match
-            %%
-            %% We don't have all this: the path isn't filled in, and
-            %% we don't have the previous key values
-            %% FIXME: Fill the path in
-            %% FIXME: include previous key parts somewhere
-
-            KeysItems = lists:map(
-                          fun(K) ->
-                                  KName = element(KeysSoFar + 1, K),
-                                  Template#cfg_schema{name = KName}
-                          end, ListKeys),
-
-            %% The goal here is to return the set of possible values
-            %% at this point, plus something that will prompt for a
-            %% new list item. We need to just convince the menu thingy
-            %% we are a normal list of children, and we need to keep
-            %% enough blah around so we can carry on afterwards
-            case AddListItems of
-                true ->
-                    [Template#cfg_schema{node_type = new_list_item} | KeysItems];
-                false ->
-                    KeysItems
-            end
-    end;
-children(_, _, _) ->
-    [].
-
-
-action(_) -> fun(_) -> ok end. % Not used for config tree items, but provide default
-
-node_type(#cfg_schema{node_type = Type}) -> Type.
-
-
-expand_children(F, Arg) when is_function(F) ->
-    case erlang:fun_info(F, arity) of
-        {arity, 0} -> F();
-        {arity, 1} -> F(Arg)
-    end;
-expand_children(L, _Arg) when is_list(L) -> L;
-expand_children(_, _) -> [].
-
-insert_full_path(Children, Path) ->
-    lists:map(fun(#cfg_schema{} = S) ->
-                      S#cfg_schema{path = Path}
-              end, Children).
-
-filter_list_key_leafs(Children, KeyNames) ->
-    lists:filter(fun(#cfg_schema{name = Name}) ->
-                         not lists:member(Name, KeyNames)
-                 end, Children).
 
 %%--------------------------------------------------------------------
 %% Configuration session transaction API
@@ -173,17 +67,21 @@ set(Txn, SchemaPath, Value) ->
     ?DBG("Setting path ~p to value ~p in Txn ~p~n",[SchemaPath, Value, Txn]),
     cfg_txn:set(Txn, SchemaPath, Value).
 
+show(Txn, SchemaPath) ->
+    Tree = cfg_txn:get_tree(Txn, SchemaPath),
+    {ok, Tree}.
+
 commit(Txn) ->
     ?DBG("committin~n",[]),
     cfg_txn:commit(Txn).
 
 
 schema_list_to_path(SchemaItems) ->
-    lists:map(fun(#cfg_schema{name = Name}) -> Name end, SchemaItems).
+    lists:map(fun(#{rec_type := schema, name := Name}) -> Name end, SchemaItems).
 
-schema_list_to_path([#cfg_schema{} = Last], Acc) ->
+schema_list_to_path([#{rec_type := schema} = Last], Acc) ->
     {Last, lists:reverse(Acc)};
-schema_list_to_path([#cfg_schema{name = Name} | Ss], Acc) ->
+schema_list_to_path([#{rec_type := schema, name := Name} | Ss], Acc) ->
     schema_list_to_path(Ss, [Name | Acc]).
 
 
@@ -214,45 +112,49 @@ container(Name, Desc, Children) ->
     container(Name, Desc, Children, []).
 
 container(Name, Desc, Children, Opts) ->
-    #cfg_schema{node_type = container,
-                name = Name,
-                desc = Desc,
-                children = Children,
-                opts = Opts
-               }.
+    #{rec_type => schema,
+      node_type => container,
+      name => Name,
+      desc => Desc,
+      children => Children,
+      opts => Opts
+     }.
 
 
 list(Name, Desc, Key, Children) ->
     list(Name, Desc, Key, Children, []).
 
 list(Name, Desc, KeyNames, Children, Opts) when is_list(KeyNames) ->
-    #cfg_schema{node_type = list,
-                name = Name,
-                desc = Desc,
-                children = Children,
-                key_names = KeyNames,
-                opts = Opts
-               }.
+    #{rec_type => schema,
+      node_type => list,
+      name => Name,
+      desc => Desc,
+      children => Children,
+      key_names => KeyNames,
+      opts => Opts
+     }.
 
 leaf_list(Name, Desc, Type) ->
     leaf_list(Name, Desc, Type, []).
 
 leaf_list(Name, Desc, Type, Opts) ->
-    #cfg_schema{node_type = leaf_list,
-                name = Name,
-                desc = Desc,
-                type = Type,
-                opts = Opts
-               }.
+    #{rec_type => schema,
+      node_type => leaf_list,
+      name => Name,
+      desc => Desc,
+      type => Type,
+      opts => Opts
+     }.
 
 leaf(Name, Desc, Type) ->
     leaf(Name, Desc, Type, []).
 
 leaf(Name, Desc, Type, Opts) ->
-    #cfg_schema{node_type = leaf,
-                name = Name,
-                desc = Desc,
-                type = Type,
-                opts = Opts
-               }.
+    #{rec_type => schema,
+      node_type => leaf,
+      name => Name,
+      desc => Desc,
+      type => Type,
+      opts => Opts
+     }.
 
