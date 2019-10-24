@@ -130,21 +130,27 @@ call_generator({M, F}) ->
 expand_nodes(Nodes) ->
     expand_nodes(Nodes, [], []).
 
-expand_nodes([#cfg_schema{node_type = container, children = Cs} = T|Ts], Path, Acc) ->
+expand_nodes([#{rec_type := schema, node_type := container,
+                name := Name, children := Cs} = T|Ts], Path, Acc) ->
     Children = eval_children(Cs),
-    ThisPath = [T#cfg_schema.name| Path],
-    T1 = T#cfg_schema{children = expand_nodes(Children, ThisPath, []), path = lists:reverse(ThisPath)},
+    ThisPath = [Name | Path],
+    SchemaEntry = map_to_schema(T),
+    T1 = SchemaEntry#cfg_schema{children = expand_nodes(Children, ThisPath, []),
+                                path = lists:reverse(ThisPath)},
     expand_nodes(Ts, Path, [T1|Acc]);
-expand_nodes([#cfg_schema{node_type = list, children = Cs} = T|Ts], Path, Acc) ->
+expand_nodes([#{rec_type := schema, node_type := list,
+                children := Cs, name := Name} = T|Ts], Path, Acc) ->
     Children = eval_children(Cs),
-    ThisPath = [T#cfg_schema.name| Path],
-    T1 = T#cfg_schema{children = expand_nodes(Children, ThisPath, []), path = lists:reverse(ThisPath)},
+    ThisPath = [Name | Path],
+    SchemaEntry = map_to_schema(T),
+    T1 = SchemaEntry#cfg_schema{children = expand_nodes(Children, ThisPath, []),
+                                path = lists:reverse(ThisPath)},
     expand_nodes(Ts, Path, [T1|Acc]);
-expand_nodes([#cfg_schema{node_type = leaf} = T|Ts], Path, Acc) ->
-    T1 = T#cfg_schema{path = lists:reverse([T#cfg_schema.name|Path])},
-    expand_nodes(Ts, Path, [T1|Acc]);
-expand_nodes([#cfg_schema{node_type = leaf_list} = T|Ts], Path, Acc) ->
-    T1 = T#cfg_schema{path = lists:reverse([T#cfg_schema.name|Path])},
+expand_nodes([#{rec_type := schema, node_type := Leaf, name := Name} = T|Ts],
+             Path, Acc) when Leaf == leaf; Leaf == leaf_list ->
+    SchemaEntry = map_to_schema(T),
+    ThisPath = [Name | Path],
+    T1 = SchemaEntry#cfg_schema{path = lists:reverse(ThisPath)},
     expand_nodes(Ts, Path, [T1|Acc]);
 expand_nodes([], _Path, Acc) ->
     lists:reverse(Acc).
@@ -156,4 +162,41 @@ eval_children(Fn) when is_function(Fn) ->
 eval_children({M,F}) ->
     M:F().
 
+map_to_schema(#{rec_type := schema,
+                node_type := container, name := Name} = M) ->
+    #cfg_schema{node_type = container,
+                name = Name,
+                desc = maps:get(desc, M, ""),
+                opts = extra_map_keys(M)
+               };
+map_to_schema(#{rec_type := schema, node_type := list,
+                name := Name, key_names := KeyNames} = M) ->
+    #cfg_schema{node_type = list,
+                name = Name,
+                desc = maps:get(desc, M, ""),
+                key_names = KeyNames,
+                opts = extra_map_keys(M)
+               };
+map_to_schema(#{rec_type := schema, node_type := Leaf, name := Name,
+                type := Type} = M) when Leaf == leaf;
+                                        Leaf == leaf_list ->
+    #cfg_schema{node_type = Leaf,
+                name = Name,
+                desc = maps:get(desc, M, ""),
+                type = Type,
+                opts = extra_map_keys(M)
+               }.
 
+
+
+%% Put any map keys from the user provided schema definitions that
+%% don't fit in the #cfg_schema{} standard fields into a new map for
+%% the opts field of #cfg_schema
+extra_map_keys(Map) ->
+    StandardKeys = record_info(fields, cfg_schema),
+    MapKeys = maps:keys(Map),
+    ExtraKeys = MapKeys -- [rec_type | StandardKeys],
+    lists:foldl(fun(Key, OptMap) ->
+                        #{Key := Value} = Map,
+                        maps:put(Key, Value, OptMap)
+                end, #{}, ExtraKeys).
