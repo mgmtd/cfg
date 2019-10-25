@@ -207,8 +207,8 @@ check_conflict(Db, [I|Is], Value, Path) ->
 %% Ensure the entries for the list keys exist. We already proved there
 %% is an entry for the list item itself, so these leafs *must*
 %% exist. Work checking though.
-validate_set_list(Db, FullPath, #cfg_schema{key_names = KeyNames,
-                                            key_values = KeyValues}) ->
+validate_set_list(Db, FullPath, #{key_names := KeyNames,
+                                  key_values := KeyValues}) ->
     NVPairs = lists:zip(KeyNames, KeyValues),
     validate_set_list_keys(Db, FullPath, NVPairs).
 

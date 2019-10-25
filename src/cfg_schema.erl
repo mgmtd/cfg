@@ -18,7 +18,9 @@
 %%--------------------------------------------------------------------
 -module(cfg_schema).
 
--export([init/0, install_schema/1, install_schema/2, parse/2, lookup/1]).
+-export([init/0, install_schema/1, install_schema/2, parse/2]).
+
+-export([children/1, lookup/1]).
 
 -include("cfg.hrl").
 
@@ -99,7 +101,7 @@ lookup([{ns, NS}|Path]) ->
         [{_, Ets}] ->
             case ets:lookup(Ets, Path) of
                 [#cfg_schema{} = Res] ->
-                    Res;
+                    schema_to_map(Res);
                 [] ->
                     false
             end;
@@ -107,7 +109,19 @@ lookup([{ns, NS}|Path]) ->
             false
     end;
 lookup(Path) ->
+    ?DBG("lookup at path ~p~n",[Path]),
     lookup([{ns, default}|Path]).
+
+children([{ns, NS} | Path]) ->
+     case ets:lookup(cfg_schema_ns, NS) of
+        [{_, Ets}] ->
+             Recs = ets:match_object(Ets, #cfg_schema{path = Path ++ ['_'], _ = '_'}),
+             lists:map(fun(R) -> schema_to_map(R) end, Recs);
+        [] ->
+            []
+     end;
+children(Path) ->
+    children([{ns, default}|Path]).
 
 
 parse(Generators, NameSpace) ->
@@ -200,3 +214,16 @@ extra_map_keys(Map) ->
                         #{Key := Value} = Map,
                         maps:put(Key, Value, OptMap)
                 end, #{}, ExtraKeys).
+
+schema_to_map(#cfg_schema{opts = Opts, path = Path} = S) ->
+    Map = #{rec_type => schema,
+            path => Path,
+            node_type => S#cfg_schema.node_type,
+            name => S#cfg_schema.name,
+            desc => S#cfg_schema.desc,
+            type => S#cfg_schema.type,
+            key_names => S#cfg_schema.key_names,
+            key_values => S#cfg_schema.key_values,
+            children => fun() -> children(Path) end
+           },
+    maps:merge(Map, Opts).
