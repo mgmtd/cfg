@@ -21,7 +21,7 @@
 
 -export_type([txn/0]).
 
--export([new/0, exit_txn/1, get/2, get_tree/2, set/3, list_keys/2, commit/1]).
+-export([new/0, exit_txn/1, get/2, get_tree/2, set/3, list_keys/3, commit/1]).
 
 new() ->
     TxnId = erlang:unique_integer(),
@@ -89,8 +89,8 @@ set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
             {error, Reason}
     end.
 
-list_keys(#cfg_txn{ets_copy = Copy}, Path) ->
-    ets:select(Copy, [{#cfg{path = Path ++ ['$1'], _ = '_'}, [], ['$1']}]).
+list_keys(#cfg_txn{ets_copy = Copy}, Path, Pattern) ->
+    ets:select(Copy, [{#cfg{path = Path ++ [Pattern], _ = '_'}, [], ['$1']}]).
 
 
 

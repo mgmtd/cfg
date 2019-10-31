@@ -121,6 +121,7 @@ children([{ns, NS} | Path]) ->
             []
      end;
 children(Path) ->
+    ?DBG("children at path ~p~n",[Path]),
     children([{ns, default}|Path]).
 
 

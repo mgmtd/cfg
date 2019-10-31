@@ -136,3 +136,37 @@ write(#cfg{} = Record) - write Record to the config table
 Fun can use cfg_db:read/1, cfg_db:write/1 which will be re-directed to
 the backend specific functions.
 
+Children
+========
+
+To look up the children at a path for display as a menu:
+
+Children of a container at path "c1" - Simple list of node types from the schema
+
+Children of a list item:
+    - Special node 'add_new_entry' if we are adding a list item
+    - unique list of the first key elements from the config
+      or operational database.
+    - The possible leafs of the list items if it's a show command (if we want
+      to show all the list items for a single leaf) from the schema
+
+Children of a list item after the first key when there are more keys:
+    - Special node 'add_new_entry' for the next list key item
+    - Unique list of the second key elements from the config
+    - The possible nodes inside the list for a show command
+
+Children of a list item after all keys:
+    - Nodes inside the list from the schema
+
+Children of a leaf for a set command (no children if it's a show command)
+    - enum values if it's an enum
+    - " if it's a string ??
+    - <int> or similar prompt if it's another data type
+
+Children of a leaf_list
+    - [
+
+Children of a leaf list opener
+    - ]
+
+set client clients key1 key2 port value

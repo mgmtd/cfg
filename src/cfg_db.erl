@@ -80,7 +80,7 @@ backend_mod(config) -> cfg_backend_config.
 %% e.g. {set, ["a",{"b","c"},"name"], "Val"} leads to these database entries:
 %%
 %% #cfg{node_type = list, path = ["a"], value = ["keyb_name", "keyc_name"]}
-%% #cfg{node_type = list, path = ["a", {"b", "c"}], value = ["keyb_name", "keyc_name"]}
+%% #cfg{node_type = list_key, path = ["a", {"b", "c"}], value = ["keyb_name", "keyc_name"]}
 %% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "keyb_name"], value = "b"}
 %% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "keyc_name"], value = "c"}
 %% #cfg{node_type = leaf, path = ["a", {"b", "c"}, "name"],     value = "Val"}
@@ -228,16 +228,16 @@ validate_set_list_keys(Db, Path, [{Name, _Value}|Ks]) ->
 
 %% Create a cfg record sutable to insert in the database from the schema
 %% record and the full path and value.
-schema_to_cfg(#{rec_type := schema, node_type := NodeType, name := Name}, Path, Value) ->
+schema_to_cfg(#{rec_type := schema,
+                node_type := NodeType, name := Name}, Path, Value) ->
     #cfg{node_type = NodeType,
          name = Name,
          path = Path,
          value = Value
         }.
 
-schema_list_key_to_cfg(#{rec_type := schema, key_names := KNs,
-                         node_type := NodeType} = C, Path, Key) ->
-    #cfg{node_type = NodeType,
+schema_list_key_to_cfg(#{rec_type := schema, key_names := KNs} = C, Path, Key) ->
+    #cfg{node_type = list_key,
          name = Key,
          path = Path,
          value = KNs
@@ -312,21 +312,21 @@ zntree_to_cfg_tree({_Thread, {_Left, _Right = []}}, Acc) ->
     Acc;
 zntree_to_cfg_tree(Z, Acc) ->
     case cfg_zntrees:value(Z) of
-        #cfg{node_type = container} = Cfg ->
-            Acc1 = [Cfg#cfg{value = zntree_to_cfg_tree(cfg_zntrees:children(Z), [])} | Acc],
-            zntree_to_cfg_tree(cfg_zntrees:right(Z), Acc1);
-        #cfg{node_type = leaf} = Cfg ->
+        #cfg{node_type = Leaf} = Cfg when Leaf == leaf; Leaf == leaf_list ->
             zntree_to_cfg_tree(cfg_zntrees:right(Z), [Cfg | Acc]);
-        #cfg{node_type = leaf_list} = Cfg ->
-            zntree_to_cfg_tree(cfg_zntrees:right(Z), [Cfg | Acc]);
-        #cfg{node_type = list} = Cfg ->
-            Acc1 = [Cfg#cfg{value = zntree_to_cfg_tree(cfg_zntrees:children(Z), [])} | Acc],
+        #cfg{node_type = NT} = Cfg when NT == container; NT == list;
+                                        NT == list_key ->
+            Acc1 = [Cfg#cfg{value =
+                                zntree_to_cfg_tree(cfg_zntrees:children(Z), [])}
+                    | Acc],
             zntree_to_cfg_tree(cfg_zntrees:right(Z), Acc1)
     end.
 
 simplify_tree([#cfg{node_type = container, name = Name, value = Children} |Ts]) ->
     [{Name, simplify_tree(Children)}|simplify_tree(Ts)];
 simplify_tree([#cfg{node_type = list, name = Name, value = Children} |Ts]) ->
+    [{Name, simplify_tree(Children)}|simplify_tree(Ts)];
+simplify_tree([#cfg{node_type = list_key, name = Name, value = Children} |Ts]) ->
     [{Name, simplify_tree(Children)}|simplify_tree(Ts)];
 simplify_tree([#cfg{name = Name, value = Value} | Cfgs]) ->
     [{Name, {value, Value}}|simplify_tree(Cfgs)];
