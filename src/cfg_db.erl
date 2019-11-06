@@ -16,6 +16,9 @@
 
 -export([cfg_list_to_tree/1, simplify_tree/1, schema_path_to_key/1]).
 
+%% Dirty operations towards current config database
+-export([lookup/1, lookup/2, list_keys/1, list_keys/2, list_keys/3]).
+
 %%--------------------------------------------------------------------
 %% @doc Wrapper functions around the operations towards the chosen storage
 %% engine
@@ -47,6 +50,28 @@ write(permanent, #cfg{} = Cfg) ->
     BackendMod:write(Cfg);
 write({ets, Ets}, #cfg{} = Cfg) ->
     ets:insert(Ets, Cfg).
+
+lookup(Path) ->
+    lookup(permanent, Path).
+
+lookup(permanent, Path) ->
+    BackendMod = backend(),
+    BackendMod:lookup(Path);
+lookup({ets, Ets}, Path) ->
+    ets:lookup(Ets, Path).
+
+
+list_keys(Path) ->
+    list_keys(Path, '$1').
+
+list_keys(Path, Pattern) ->
+    list_keys(permanent, Path, Pattern).
+
+list_keys(permanent, Path, Pattern) ->
+    BackendMod = backend(),
+    BackendMod:select(Path, Pattern);
+list_keys({ets, Ets}, Path, Pattern) ->
+    ets:select(Ets, [{#cfg{path = Path ++ [Pattern], _ = '_'}, [], ['$1']}]).
 
 copy_to_ets() ->
     BackendMod = backend(),
@@ -269,7 +294,6 @@ cfg_list_to_tree([], Z) ->
 
 % Insert an item in the zntree. Z points to the children of the root node
 zntree_insert_item(#cfg{path = Path} = Cfg, Z) ->
-    ?DBG("insert : ~p~n",[Path]),
     Z1 = zntree_node_at_path(Path, Z),
     Z2 = cfg_zntrees:insert(Cfg, Z1),
     %% Z2 now points to our new node. Point it back to the root node ready
@@ -305,7 +329,7 @@ zntree_root(Z) ->
 %% Convert the zntree of our cfg records into a tree of #cfg{} records
 -spec zntree_to_cfg_tree(cfg_zntrees:zntree()) -> list().
 zntree_to_cfg_tree(Zntree) ->
-    ?DBG("zn:~p~n",[Zntree]),
+    %% ?DBG("zn:~p~n",[Zntree]),
     zntree_to_cfg_tree(Zntree, []).
 
 zntree_to_cfg_tree({_Thread, {_Left, _Right = []}}, Acc) ->

@@ -13,7 +13,11 @@
 -include("cfg.hrl").
 
 %% API
--export([start_link/0, load_schema/2]).
+-export([start_link/0, load_schema/2,
+         commit/1,
+         subscribe/3,
+         unsubscribe/1,
+         show_subscriptions/0, subscriptions/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -22,7 +26,9 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-
+                subs = ets:new(subscriptions, []),
+                sub_pids = ets:new(sub_pids, [bag]),
+                sub_refs = ets:new(sub_refs, [])
                }).
 
 %%%===================================================================
@@ -44,6 +50,23 @@ start_link() ->
 load_schema(NS, ParsedSchema) ->
     gen_server:call(?MODULE, {load_schema, NS, ParsedSchema}).
 
+subscribe(Path, Pid, Opts) when is_pid(Pid); is_atom(Pid); is_list(Opts) ->
+    gen_server:call(?SERVER, {subscribe, Path, Pid, Opts}).
+
+unsubscribe(Ref) ->
+    gen_server:call(?SERVER, {unsubscribe, Ref}).
+
+show_subscriptions() ->
+    Subscriptions = subscriptions(),
+    lists:foreach(fun({{Path, Pid,_Ref}, _Opts}) ->
+                          io:format("~p => ~p~n",[Pid, Path])
+                  end, Subscriptions).
+
+subscriptions() ->
+    gen_server:call(?SERVER, get_subscriptions).
+
+commit(Txn) ->
+    gen_server:call(?SERVER, {commit, Txn}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -83,6 +106,37 @@ init([]) ->
 handle_call({load_schema, NS, ParsedSchema}, _From, State) ->
     Reply = cfg_schema:install_schema(NS, ParsedSchema),
     {reply, Reply, State};
+handle_call({subscribe, Path, Pid, Opts}, _From, State) ->
+    case cfg:lookup(Path) of
+        {error, _Reason} = Err ->
+            {reply, Err, State};
+        {ok, Config} ->
+            Ref = erlang:make_ref(),
+            MonRef = erlang:monitor(process, Pid),
+            ets:insert(State#state.subs, {{Path, Pid, Ref}, Opts}),
+            ets:insert(State#state.sub_refs, {Ref, {Path, Pid, MonRef}}),
+            ets:insert(State#state.sub_pids, {Pid, {Path, Ref}}),
+            Pid ! {updated_config, Ref, Config},
+            {reply, {ok, Ref}, State}
+    end;
+handle_call({unsubscribe, Ref}, _From, State) ->
+    case ets:lookup(State#state.sub_refs, Ref) of
+        [{Ref, {Path, Pid, MonRef}}] ->
+            erlang:demonitor(MonRef),
+            ets:delete(State#state.subs, {Path, Pid, Ref}),
+            ets:delete(State#state.sub_refs, Ref),
+            ets:delete_object(State#state.sub_pids, {Pid, {Path, Ref}}),
+            {reply, ok, State};
+        [] ->
+            {reply, ok, State}
+    end;
+handle_call(get_subscriptions, _From, State) ->
+    Subs = ets:tab2list(State#state.subs),
+    {reply, Subs, State};
+handle_call({commit, Txn}, _From, State) ->
+    cfg_txn:commit(Txn),
+    Reply = ok,
+    {reply, Reply, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -112,6 +166,24 @@ handle_cast(_Request, State) ->
                          {noreply, NewState :: term(), Timeout :: timeout()} |
                          {noreply, NewState :: term(), hibernate} |
                          {stop, Reason :: normal | term(), NewState :: term()}.
+handle_info({'DOWN', _, _, Pid, _}, State) ->
+    %% Process down, remove all the subscriptions of this process
+    case ets:lookup(State#state.sub_pids, Pid) of
+        [] ->
+            ok;
+        Recs ->
+            lists:foreach(
+              fun({_Pid, {Path, Ref}}) ->
+                      [{Ref, {Path, Pid, MonRef}}] =
+                          ets:lookup(State#state.sub_refs, Ref),
+                      erlang:demonitor(MonRef),
+                      ets:delete(State#state.sub_refs, Ref),
+                      ets:delete(State#state.subs, {Path, Pid, Ref})
+              end, Recs),
+            %% Delete all entries from the duplicate_bag with this Pid
+            ets:delete(State#state.sub_pids, Pid)
+    end,
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 

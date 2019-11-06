@@ -170,3 +170,59 @@ Children of a leaf list opener
     - ]
 
 set client clients key1 key2 port value
+
+Subscriptions
+=============
+
+Processes can subscribe to receive notifications of changes to the
+configuration.
+
+A process can subscribe to changes using
+
+    {ok, Ref} = cfg:subscribe(Path, Pid)
+
+where Path is the path to the part of the tree of interest as a list
+of path names e.g. ["server", "servers"], and Pid is the Pid of the
+process that should be notified. List keys should be tuples
+e.g. ["server", "servers", {"host1"}, "port"]
+
+Configuration changes are delivered as a message {updated_config, Ref,
+UpdatedConfig} where Ref is the reference returned by the call to
+cfg:subscribe/2
+
+UpdatedConfig depends on the type of node that is subscribed to:
+
+List Node -> UpdatedConfig is the full list of items after all
+             changes have been applied
+
+Container -> UpdatedConfig is a list of leaf nodes immediately below
+             the container with their values as Key Value pairs :
+             [{LeafName1, NewValue1}, {LeafName2, NewValue2}]
+
+Leaf -> UpdatedConfig is [{LeafName, NewValue}]
+
+Q. Should we also provide the previous values?
+Q. Should we exclude entries that have not changed or always provide the full config
+Q. Maybe allow both options by configuration in the call to subscribe?
+
+Q. Maybe we should provide the list of changes instead, so for list
+   items do the diffing for the user: {added, [X,Y,Z]}, {deleted, [A,B]},
+   or for leafs
+
+Options
+
+subtree - Instead of just immediate children, send updates if any part
+          of the subtree changes and include the full subtree in the
+          updated_config message.
+
+include_unchanged - When providing KV list of values include all values in cluding those that were not changed during the transaction.
+
+include_before - send {updated_config, Ref, Before, After} 
+
+Implementation
+--------------
+
+We store an ets bag of all the subscriptions path -> Pid. At commit time we
+traverse the ets table looking up the value of each path in both the
+txn ets copy and the backing store. Any items that are different
+between new and old trigger an updated_config message.

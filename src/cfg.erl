@@ -9,18 +9,21 @@
 
 -include("cfg.hrl").
 
--export([init/2, load_schema/1, load_schema/2]).
+-export([init/2, load_schema/1, load_schema/2, subscribe/2, subscribe/3]).
 
 %% Functions for users / application writers / schema designers to create
 %% nodes in their configuration tree
 -export([container/3, container/4,
          list/4, list/5,
          leaf_list/3, leaf_list/4,
-         leaf/3, leaf/4
+         leaf/4, leaf/5
         ]).
 
 
 -export([transaction/0, exit_transaction/1, set/3, show/2, commit/1]).
+
+%% API towards current configuration
+-export([lookup/1]).
 
 -export_type([value/0, yang_value/0]).
 
@@ -72,8 +75,51 @@ show(Txn, SchemaPath) ->
     {ok, Tree}.
 
 commit(Txn) ->
-    ?DBG("committin~n",[]),
-    cfg_txn:commit(Txn).
+    cfg_server:commit(Txn).
+
+subscribe(Path, Pid) ->
+    subscribe(Path, Pid, []).
+
+subscribe(Path, Pid, Opts) ->
+    cfg_server:subscribe(Path, Pid, Opts).
+
+%% @doc read current config at path at a single level outside of a
+%% transaction. For a leaf this will be the configured value of the
+%% leaf or its default if provided in the schema. For a list item this
+%% will be the list of list keys, for a container item or full path to
+%% a list item this will be a list of child nodes.
+lookup(Path) ->
+    SchemaPath = lists:filter(fun(El) -> not is_tuple(El) end, Path),
+    case cfg_schema:lookup(SchemaPath) of
+        false ->
+            {error, unkown_schema_path};
+        #{node_type := list, key_names := Keys} ->
+            case lists:last(Path) of
+                ListKey when is_tuple(ListKey) ->
+                    %% It's a full path to a list entry, return the
+                    %% names of the children of the list key
+                    Cs = cfg_schema:children(SchemaPath),
+                    {ok, lists:map(fun(#{name := Name}) -> Name end, Cs)};
+                _ ->
+                    %% User looked up the list key itself, return the list keys
+                    Pattern = erlang:make_tuple(length(Keys), '_'),
+                    {ok, cfg_db:list_keys(Path)}
+            end;
+        #{node_type := container} ->
+            Cs = cfg_schema:children(SchemaPath),
+            {ok, lists:map(fun(#{name := Name}) -> Name end, Cs)};
+        #{node_type := Leaf, default := Default} when Leaf == leaf;
+                                                      Leaf == leaf_list ->
+            case cfg_db:lookup(Path) of
+                [#cfg{value = Value}] ->
+                    {ok, Value};
+                [] when Default == undefined ->
+                    {ok, undefined};
+                [] ->
+                    {ok, Default}
+            end
+    end.
+
 
 
 schema_list_to_path(SchemaItems) ->
@@ -146,15 +192,16 @@ leaf_list(Name, Desc, Type, Opts) ->
       opts => Opts
      }.
 
-leaf(Name, Desc, Type) ->
-    leaf(Name, Desc, Type, []).
+leaf(Name, Desc, Type, Default) ->
+    leaf(Name, Desc, Type, Default, []).
 
-leaf(Name, Desc, Type, Opts) ->
+leaf(Name, Desc, Type, Default, Opts) ->
     #{rec_type => schema,
       node_type => leaf,
       name => Name,
       desc => Desc,
       type => Type,
+      default => Default,
       opts => Opts
      }.
 

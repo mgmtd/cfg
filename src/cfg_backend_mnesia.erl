@@ -14,12 +14,17 @@
 
 -export([copy_to_ets/0]).
 
+%% Transaction based operations
 -export([transaction/1,
          read/1,
          write/1,
          delete/1,
          first/0,
-         next/1
+         next/1]).
+
+%% Dirty operations
+-export([select/2,
+         lookup/1
         ]).
 
 %%--------------------------------------------------------------------
@@ -67,6 +72,12 @@ first() ->
 
 next(Key) ->
     mnesia:next(cfg, Key).
+
+lookup(Path) ->
+    mnesia:dirty_read(cfg, Path).
+
+select(Path, Pattern) ->
+    mnesia:dirty_select(cfg, [{#cfg{path = Path ++ [Pattern], _ = '_'}, [], ['$1']}]).
 
 -spec copy_to_ets() -> ets:tid().
 copy_to_ets() ->

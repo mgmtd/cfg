@@ -36,7 +36,6 @@ exit_txn(#cfg_txn{ets_copy = EtsCopy}) ->
 
 %% @doc commit the operations stored up in the configuration transaction
 commit(#cfg_txn{ets_copy = Copy, ops = Ops}) ->
-    ?DBG("cfg_txn: committing~n",[]),
     Fun = fun() ->
                   lists:foreach(fun({set, Path, Value}) ->
                                     cfg_db:insert_path_items(permanent, Path, Value);
@@ -56,15 +55,15 @@ get(#cfg_txn{ets_copy = Copy}, Path) ->
     end.
 
 get_tree(#cfg_txn{ets_copy = Copy}, Path) ->
-    ?DBG("Path = ~p~n",[Path]),
+    %% ?DBG("Path = ~p~n",[Path]),
     Key = cfg_db:schema_path_to_key(Path),
     Rows = ets:match_object(Copy, #cfg{path = Key ++ '_', _ = '_'}),
     SubRows = drop_path_prefix(Key, Rows),
-    ?DBG("Selected Rows ~p~n",[SubRows]),
+    %% ?DBG("Selected Rows ~p~n",[SubRows]),
     Tree = cfg_db:cfg_list_to_tree(SubRows),
-    ?DBG("Tree ~p~n",[Tree]),
+    %% ?DBG("Tree ~p~n",[Tree]),
     SimpleTree = cfg_db:simplify_tree(Tree),
-    ?DBG("Simple Tree ~p~n",[SimpleTree]),
+    %% ?DBG("Simple Tree ~p~n",[SimpleTree]),
     SimpleTree.
 
 drop_path_prefix(Path, Rows) ->
@@ -82,7 +81,7 @@ set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
     case cfg_db:check_conflict({ets, Copy}, Path, Value) of
         ok ->
             cfg_db:insert_path_items({ets, Copy}, Path, Value),
-            ?DBG("ets content: ~p~n",[ets:tab2list(Copy)]),
+            %%v?DBG("ets content: ~p~n",[ets:tab2list(Copy)]),
             {ok, Txn#cfg_txn{ops = [{set, Path, Value} | Ops]}};
         {error, Reason} ->
             ?DBG(Reason),

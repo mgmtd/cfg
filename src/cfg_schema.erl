@@ -109,7 +109,7 @@ lookup([{ns, NS}|Path]) ->
             false
     end;
 lookup(Path) ->
-    ?DBG("lookup at path ~p~n",[Path]),
+    %% ?DBG("lookup at path ~p~n",[Path]),
     lookup([{ns, default}|Path]).
 
 children([{ns, NS} | Path]) ->
@@ -121,7 +121,7 @@ children([{ns, NS} | Path]) ->
             []
      end;
 children(Path) ->
-    ?DBG("children at path ~p~n",[Path]),
+    %% ?DBG("children at path ~p~n",[Path]),
     children([{ns, default}|Path]).
 
 
