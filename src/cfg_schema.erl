@@ -18,9 +18,10 @@
 %%--------------------------------------------------------------------
 -module(cfg_schema).
 
--export([init/0, install_schema/1, install_schema/2, parse/2]).
+-export([init/0, install_schema/1, install_schema/2, parse/2,
+        remove_schema/0, remove_schema/1]).
 
--export([children/1, lookup/1]).
+-export([children/1, lookup/1, lookup_path/1]).
 
 -include("cfg.hrl").
 
@@ -82,6 +83,18 @@ install_tree(_, []) ->
 insert_node(Ets, #cfg_schema{} = Node) ->
     ets:insert(Ets, Node#cfg_schema{children = []}).
 
+remove_schema() ->
+    remove_schema(default).
+
+remove_schema(NS) ->
+    case ets:lookup(cfg_schema_ns, NS) of
+        [{NS, Tid}] ->
+            ets:delete(Tid),
+            ets:delete(cfg_schema_ns, NS);
+        [] ->
+            ok
+    end.
+
 schema_ets(NS) ->
     case ets:lookup(cfg_schema_ns, NS) of
         [{NS, Tid}] ->
@@ -97,9 +110,10 @@ init_schema_tab() ->
 
 
 lookup([{ns, NS}|Path]) ->
+    SchemaPath = lists:filter(fun(P) -> not is_tuple(P) end, Path),
     case ets:lookup(cfg_schema_ns, NS) of
         [{_, Ets}] ->
-            case ets:lookup(Ets, Path) of
+            case ets:lookup(Ets, SchemaPath) of
                 [#cfg_schema{} = Res] ->
                     schema_to_map(Res);
                 [] ->
@@ -115,7 +129,8 @@ lookup(Path) ->
 children([{ns, NS} | Path]) ->
      case ets:lookup(cfg_schema_ns, NS) of
         [{_, Ets}] ->
-             Recs = ets:match_object(Ets, #cfg_schema{path = Path ++ ['_'], _ = '_'}),
+             SchemaPath = lists:filter(fun(P) -> not is_tuple(P) end, Path),
+             Recs = ets:match_object(Ets, #cfg_schema{path = SchemaPath ++ ['_'], _ = '_'}),
              lists:map(fun(R) -> schema_to_map(R) end, Recs);
         [] ->
             []
@@ -123,6 +138,33 @@ children([{ns, NS} | Path]) ->
 children(Path) ->
     %% ?DBG("children at path ~p~n",[Path]),
     children([{ns, default}|Path]).
+
+%% @doc Given a path of the form ["server", "servers", {"S1"}, "port"]
+%% return a list of schema items for the same path with any data after
+%% a leaf list considered to be a value.
+lookup_path(Path) ->
+    lookup_path(Path, [], []).
+
+lookup_path([P | Ps], PathSoFar, [#{node_type := list} = L | Acc]) when is_tuple(P) ->
+    case lookup(PathSoFar) of
+        #{} = Map ->
+            ListItem = L#{key_values := tuple_to_list(P)},
+            lookup_path(Ps, PathSoFar, [ListItem | Acc]);
+        false ->
+            {error, {unknown_path, PathSoFar}}
+    end;
+lookup_path([P | Ps], PathSoFar, Acc) ->
+    NextPath = PathSoFar ++ [P],
+    case lookup(NextPath) of
+        #{node_type := Leaf} = Map when ?is_leaf(Leaf)  ->
+            {ok, lists:reverse([Map | Acc]), Ps};
+        #{} = Map ->
+            lookup_path(Ps, NextPath, [Map | Acc]);
+        false ->
+            {error, {unknown_path, PathSoFar}}
+    end;
+lookup_path([], _, Acc) ->
+    {ok, lists:reverse(Acc), ""}.
 
 
 parse(Generators, NameSpace) ->

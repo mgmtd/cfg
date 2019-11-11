@@ -222,7 +222,29 @@ include_before - send {updated_config, Ref, Before, After}
 Implementation
 --------------
 
-We store an ets bag of all the subscriptions path -> Pid. At commit time we
+We store an ets bag of all the subscriptions Path -> Pid. At commit time we
 traverse the ets table looking up the value of each path in both the
 txn ets copy and the backing store. Any items that are different
 between new and old trigger an updated_config message.
+
+This happens during commit. Order of events is a bit unclear..
+
+Perhaps:
+
+1. First run through changes to make sure they will apply to the database cleanly
+2. Send out subscriptions
+3. Write database transaction
+
+This means we could have sent subscriptions but the actual database
+write transaction could fail.
+
+So maybe:
+
+1. Generate all subscription messages based on pre-commit db and txn
+   db, but don't send them.
+2. Write database transaction.
+3. Send pre-prepared subscription messages if db transaction succeeded.
+
+With a lot of subscribed processes this could be a bit heavy, but
+seems safest. Run with this option for now.
+

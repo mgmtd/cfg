@@ -10,7 +10,7 @@
 
 -include("cfg.hrl").
 
--export([init/1]).
+-export([init/1, remove_db/1]).
 
 -export([copy_to_ets/0]).
 
@@ -35,7 +35,7 @@
 %% to the working directory of the erlang node ("database")
 -spec init(proplists:proplist()) -> ok.
 init(Opts) ->
-    Dir = proplists:get_value(directory, Opts, "database"),
+    Dir = proplists:get_value(db_path, Opts, "database"),
     Nodes = proplists:get_value(nodes, Opts, [node()]),
     init_db(Dir, Nodes).
 
@@ -43,11 +43,17 @@ init(Opts) ->
 -spec init_db(file:filename(), [node()]) -> ok.
 init_db(Path, Nodes) ->
     ok = filelib:ensure_dir(Path),
-    ok = application:set_env(mnesia, mnesia_dir, Path),
+    ok = application:set_env(mnesia, dir, Path),
     create_schema(Nodes),
     ok = start_mnesia(),
     ok = create_table(Nodes),
     ok = mnesia:wait_for_tables([cfg], 30000).
+
+remove_db(Opts) ->
+    Dir = proplists:get_value(db_path, Opts, "database"),
+    Nodes = proplists:get_value(nodes, Opts, [node()]),
+    ok = application:stop(mnesia),
+    mnesia:delete_schema(Nodes).
 
 transaction(Fun) ->
     case mnesia:transaction(Fun) of

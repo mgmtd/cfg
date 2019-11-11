@@ -9,7 +9,7 @@
 
 -include("cfg.hrl").
 
--export([init/2, load_schema/1, load_schema/2, subscribe/2, subscribe/3]).
+-export([init/2, remove_db/2, load_schema/1, load_schema/2, subscribe/2, subscribe/3]).
 
 %% Functions for users / application writers / schema designers to create
 %% nodes in their configuration tree
@@ -50,6 +50,8 @@
 init(Backend, Opts) when Backend == mnesia ->
     cfg_db:init(Backend, Opts).
 
+remove_db(Backend, Opts) ->
+    cfg_db:remove_db(Backend, Opts).
 
 %%--------------------------------------------------------------------
 %% Configuration session transaction API

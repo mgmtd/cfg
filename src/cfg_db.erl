@@ -10,7 +10,7 @@
 
 -include("cfg.hrl").
 
--export([init/2, transaction/1, copy_to_ets/0]).
+-export([init/2, remove_db/2, transaction/1, copy_to_ets/0]).
 
 -export([insert_path_items/3, check_conflict/3]).
 
@@ -34,6 +34,11 @@ init(Backend, Opts) when Backend == mnesia;
     BackendMod = backend_mod(Backend),
     BackendMod:init(Opts),
     ets:insert(cfg_meta, {backend, BackendMod}).
+
+remove_db(Backend, Opts) ->
+    BackendMod = backend_mod(Backend),
+    BackendMod:remove_db(Opts),
+    ets:delete(cfg_meta, {backend, BackendMod}).
 
 transaction(Fun) when is_function(Fun) ->
     BackendMod = backend(),
@@ -201,7 +206,7 @@ check_conflict(Db, [I|Is], Value, Path) ->
                     case read(Db, ListItemPath) of
                         [] ->
                             check_conflict(Db, Is, Value);
-                        [#cfg{node_type = list, name = ListKeyNames}] ->
+                        [#cfg{node_type = list_key, name = ListKeyNames}] ->
                             case validate_set_list(Db, ListItemPath, I) of
                                 ok ->
                                     check_conflict(Db, Is, Value, ListItemPath);

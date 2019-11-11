@@ -10,6 +10,8 @@
 -define(DBG(DATA), io:format("[~p:~p] ~p~n",[?MODULE, ?LINE, DATA])).
 -define(DBG(FORMAT, ARGS), io:format("[~p:~p] " ++ FORMAT,[?MODULE, ?LINE] ++ ARGS)).
 
+-define(is_leaf(NodeType), ((NodeType == leaf) orelse (NodeType == leaf_list))).
+
 %% Record used to define config schema, used to drive cli completion,
 %% validation, upgrades.
 -record(cfg_schema,

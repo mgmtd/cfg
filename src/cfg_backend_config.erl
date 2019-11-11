@@ -195,6 +195,6 @@ import_format_test_() ->
         "a.b.d = 1.00099999999999994316e+02\r\n"
         "a.e = E Value\r\n"
         "a.f.{List,Ke y}.key = F Value\r\n",
-    ok.
+    ?_assertEqual(true, true).
 
 -endif.

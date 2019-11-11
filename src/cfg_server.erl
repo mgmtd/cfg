@@ -13,7 +13,7 @@
 -include("cfg.hrl").
 
 %% API
--export([start_link/0, load_schema/2,
+-export([start_link/0, load_schema/2, remove_schema/1,
          commit/1,
          subscribe/3,
          unsubscribe/1,
@@ -47,8 +47,12 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+%% @doc load a pre-parsed schema
 load_schema(NS, ParsedSchema) ->
     gen_server:call(?MODULE, {load_schema, NS, ParsedSchema}).
+
+remove_schema(NS) ->
+    gen_server:call(?MODULE, {remove_schema, NS}).
 
 subscribe(Path, Pid, Opts) when is_pid(Pid); is_atom(Pid); is_list(Opts) ->
     gen_server:call(?SERVER, {subscribe, Path, Pid, Opts}).
@@ -106,6 +110,9 @@ init([]) ->
 handle_call({load_schema, NS, ParsedSchema}, _From, State) ->
     Reply = cfg_schema:install_schema(NS, ParsedSchema),
     {reply, Reply, State};
+handle_call({remove_schema, NS}, _From, State) ->
+    Reply = cfg_schema:remove_schema(NS),
+    {reply, Reply, State};
 handle_call({subscribe, Path, Pid, Opts}, _From, State) ->
     case cfg:lookup(Path) of
         {error, _Reason} = Err ->
@@ -134,9 +141,16 @@ handle_call(get_subscriptions, _From, State) ->
     Subs = ets:tab2list(State#state.subs),
     {reply, Subs, State};
 handle_call({commit, Txn}, _From, State) ->
-    cfg_txn:commit(Txn),
-    Reply = ok,
-    {reply, Reply, State};
+    %% Generate all subscription messages
+    Subscriptions = ets:tab2list(State#state.subs),
+    Messages = subscription_messages(Subscriptions, Txn),
+    case cfg_txn:commit(Txn) of
+        ok ->
+            send_subscription_messages(Messages),
+            {reply, ok, State};
+        Err ->
+            {reply, Err, State}
+    end;
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -230,3 +244,72 @@ format_status(_Opt, Status) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+subscription_messages(Subscriptions, Txn) ->
+    lists:foldl(fun({{Path, Pid, Ref}, _Opts}, Acc) ->
+                        case subscription_message(Path, Txn) of
+                            false ->
+                                Acc;
+                            Msg ->
+                                [{Pid, {updated_config, Ref, Msg}} | Acc]
+                        end
+                end, [], Subscriptions).
+
+subscription_message(Path, Txn) ->
+    case cfg_schema:lookup(Path) of
+        #{node_type := list} ->
+            case lists:last(Path) of
+                Last when is_tuple(Last) ->
+                    container_values(Path, Txn);
+                _ ->
+                    New = cfg_txn:list_keys(Txn, Path, '$1'),
+                    Existing = cfg_db:list_keys(Path),
+                    if New == Existing ->
+                            false;
+                       true ->
+                            New
+                    end
+            end;
+        #{node_type := container} ->
+            container_values(Path, Txn);
+        #{node_type := Leaf, name := N} when Leaf == leaf; Leaf == leaf_list ->
+            [{N, leaf_value(Path, Txn)}]
+    end.
+
+container_values(Path, Txn) ->
+    Children = cfg_schema:children(Path),
+    LeafChildren = lists:filter(fun(#{node_type := Leaf}) ->
+                                        Leaf == leaf orelse Leaf == leaf_list
+                                end, Children),
+    CVs = lists:foldl(fun(#{name := N}, Acc) ->
+                              case leaf_value(Path ++ [N], Txn) of
+                                  {ok, Val} ->
+                                      [{N, Val} | Acc];
+                                  false ->
+                                      Acc
+                              end
+                      end, [], LeafChildren),
+    case CVs of
+        [] ->
+            false;
+        _ ->
+            lists:reverse(CVs)
+    end.
+
+leaf_value(Path, Txn) ->
+    {ok, New} = cfg_txn:get(Txn, Path),
+    Old = case cfg_db:lookup(Path) of
+              [#cfg{value = Val}] ->
+                  Val;
+              [] ->
+                  undefined
+          end,
+    if New =/= Old ->
+            {ok, New};
+       true ->
+            false
+    end.
+
+send_subscription_messages(Messages) ->
+    lists:foreach(fun({Pid, Msg}) ->
+                          Pid ! Msg
+                  end, Messages).
