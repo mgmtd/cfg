@@ -114,7 +114,7 @@ handle_call({remove_schema, NS}, _From, State) ->
     Reply = cfg_schema:remove_schema(NS),
     {reply, Reply, State};
 handle_call({subscribe, Path, Pid, Opts}, _From, State) ->
-    case cfg:lookup(Path) of
+    case subscription_message(Path) of
         {error, _Reason} = Err ->
             {reply, Err, State};
         {ok, Config} ->
@@ -244,6 +244,39 @@ format_status(_Opt, Status) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+%% Provide an initial value for a subscription based on committed config
+subscription_message(Path) ->
+    case cfg_schema:lookup(Path) of
+        #{node_type := list} ->
+            case lists:last(Path) of
+                Last when is_tuple(Last) ->
+                    case container_values(Path) of
+                        false ->
+                            {error, no_values};
+                        Vals ->
+                            {ok, Vals}
+                    end;
+                _ ->
+                    {ok, cfg_db:list_keys(Path)}
+            end;
+        #{node_type := container} ->
+            case container_values(Path) of
+                false ->
+                    {error, no_values};
+                Vals ->
+                    {ok, Vals}
+            end;
+        #{node_type := Leaf, name := N} when Leaf == leaf; Leaf == leaf_list ->
+            case leaf_value(Path) of
+                {ok, Val} ->
+                    {ok, [{N, Val}]};
+                false ->
+                    {error, no_value}
+            end
+    end.
+
+
 subscription_messages(Subscriptions, Txn) ->
     lists:foldl(fun({{Path, Pid, Ref}, _Opts}, Acc) ->
                         case subscription_message(Path, Txn) of
@@ -275,12 +308,16 @@ subscription_message(Path, Txn) ->
             [{N, leaf_value(Path, Txn)}]
     end.
 
+container_values(Path) ->
+    container_values(Path, undefined).
+
 container_values(Path, Txn) ->
     Children = cfg_schema:children(Path),
     LeafChildren = lists:filter(fun(#{node_type := Leaf}) ->
                                         Leaf == leaf orelse Leaf == leaf_list
                                 end, Children),
     CVs = lists:foldl(fun(#{name := N}, Acc) ->
+                              io:format(user, "leaf value ~p ~p~n",[Path ++ [N], leaf_value(Path ++ [N], Txn)]),
                               case leaf_value(Path ++ [N], Txn) of
                                   {ok, Val} ->
                                       [{N, Val} | Acc];
@@ -295,6 +332,16 @@ container_values(Path, Txn) ->
             lists:reverse(CVs)
     end.
 
+leaf_value(Path) ->
+    leaf_value(Path, undefined).
+
+leaf_value(Path, undefined) ->
+    case cfg_db:lookup(Path) of
+        [#cfg{value = Val}] ->
+            {ok, Val};
+        [] ->
+            false
+    end;
 leaf_value(Path, Txn) ->
     {ok, New} = cfg_txn:get(Txn, Path),
     Old = case cfg_db:lookup(Path) of

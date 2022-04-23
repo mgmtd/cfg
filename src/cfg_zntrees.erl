@@ -1,6 +1,5 @@
 %%%-------------------------------------------------------------------
 %%% @author Sean Hinde <sean@Seans-MacBook.local>
-%%% @copyright (C) 2019, Sean Hinde
 %%% @doc zntrees module taken from ferd.ca blogpost:
 %%%      https://ferd.ca/yet-another-article-on-zippers.html
 %%%

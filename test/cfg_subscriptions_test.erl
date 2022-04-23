@@ -80,6 +80,7 @@ subscription_test_() ->
              destroy_schema()
      end,
      fun(_Pid) ->
+             %% Expect the initial value on subscription
              receive
                  {updated, Updated} ->
                      ?_assertEqual([], Updated)
@@ -91,10 +92,31 @@ subscription_test_() ->
              Txn = cfg:transaction(),
              {ok, Txn2} = cfg:set(Txn, SchemaPath, Value),
              ok = cfg:commit(Txn2),
-
+             %% Expect the updated value
              receive
                  {updated, Updated1} ->
                      ?_assertEqual([{"newlistitem"}], Updated1)
+             after 200 ->
+                     exit(subscription_not_received)
+             end,
+             UpdPath = ["server", "servers", {"newlistitem"}, "port", "8080"],
+             {ok, SchemaPath1, Value1} = cfg_schema:lookup_path(UpdPath),
+             Txn3 = cfg:transaction(),
+             {ok, Txn4} = cfg:set(Txn3, SchemaPath1, Value1),
+             ok = cfg:commit(Txn4),
+             %% Expect the intial value on susbcribing to the new list entry
+             receive
+                 {updated, Updated2} ->
+                     ?_assertEqual([{"name","newlistitem"},{"port",["80"]}],
+                                   Updated2)
+             after 200 ->
+                     exit(subscription_not_received)
+             end,
+             %% And now the updated port number 8080
+             receive
+                 {updated, Updated3} ->
+                     ?_assertEqual([{"name","newlistitem"},{"port",["80"]}],
+                                   Updated3)
              after 200 ->
                      exit(subscription_not_received)
              end
@@ -115,5 +137,17 @@ start_subscriber() ->
                            {updated_config, Ref, Updated2} =Msg2 ->
                                ?debugFmt("Got Message2 ~p~n",[Msg2]),
                                Self ! {updated, Updated2}
+                       end,
+                       {ok, Ref2} = cfg:subscribe(["server", "servers", {"newlistitem"}], self()),
+                       receive
+                           {updated_config, Ref2, Updated3} =Msg3 ->
+                               ?debugFmt("Got leaf Message ~p~n",[Msg3]),
+                               Self ! {updated, Updated3}
+                       end,
+                       %% Now wait for the update
+                       receive
+                           {updated_config, Ref2, Updated4} =Msg4 ->
+                               ?debugFmt("Got leaf Message2 ~p~n",[Msg4]),
+                               Self ! {updated, Updated4}
                        end
                end).

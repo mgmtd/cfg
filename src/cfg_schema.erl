@@ -21,7 +21,7 @@
 -export([init/0, install_schema/1, install_schema/2, parse/2,
         remove_schema/0, remove_schema/1]).
 
--export([children/1, lookup/1, lookup_path/1]).
+-export([children/1, lookup/1, lookup_path/1, lookup_default/1]).
 
 -include("cfg.hrl").
 
@@ -125,6 +125,16 @@ lookup([{ns, NS}|Path]) ->
 lookup(Path) ->
     %% ?DBG("lookup at path ~p~n",[Path]),
     lookup([{ns, default}|Path]).
+
+lookup_default(Path) ->
+    case lookup(Path) of
+        false ->
+            {error, path_not_in_schema};
+        #{node_type := NodeType, default := Default} when ?is_leaf(NodeType) ->
+            {ok, Default};
+        _ ->
+            {error, missing_default}
+    end.
 
 children([{ns, NS} | Path]) ->
      case ets:lookup(cfg_schema_ns, NS) of

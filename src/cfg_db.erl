@@ -147,18 +147,17 @@ insert_path_items(Db, [I | Is], Value, Path) ->
             write(Db, ListItemCfg),
             ListItemsPath = FullPath ++ [Key],
 
-            %% Create an entry for the list key itself
+            %% Create an entry for the list key
             ListKeyCfg = schema_list_key_to_cfg(I, ListItemsPath, Key),
             write(Db, ListKeyCfg),
 
-            %% Create leaf entries for each of the list keys
+            %% Create a leaf entry for each list key
             insert_list_keys(Db, ListItemsPath, I),
             insert_path_items(Db, Is, Value, ListItemsPath);
 
         %% Leafs of both kinds
         #{rec_type := schema, node_type := Leaf, name := Name}
-          when Leaf == leaf;
-               Leaf == leaf_list ->
+          when ?is_leaf(Leaf) ->
             FullPath = Path ++ [Name],
             Cfg = schema_to_cfg(I, FullPath, Value),
             write(Db, Cfg)

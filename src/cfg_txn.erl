@@ -48,7 +48,7 @@ commit(#cfg_txn{ets_copy = Copy, ops = Ops}) ->
 -spec get(#cfg_txn{}, cfg:path()) -> {ok, cfg:value()} | undefined.
 get(#cfg_txn{ets_copy = Copy}, Path) ->
     case ets:lookup(Copy, Path) of
-        [Value] ->
+        [#cfg{value = Value}] ->
             {ok, Value};
         [] ->
             cfg_schema:lookup_default(Path)
