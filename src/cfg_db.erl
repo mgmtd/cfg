@@ -127,17 +127,17 @@ backend_mod(config) -> cfg_backend_config.
 insert_path_items(Db, Is, Value) ->
     insert_path_items(Db, Is, Value, []).
 
--spec insert_path_items(ets:tid(), [#{rec_type := schema}], term(), list()) -> ok.
+-spec insert_path_items(ets:tid(), [#{role := schema}], term(), list()) -> ok.
 insert_path_items(Db, [I | Is], Value, Path) ->
     case I of
-        #{rec_type := schema, node_type := container, name := Name} ->
+        #{role := schema, node_type := container, name := Name} ->
             FullPath = Path ++ [Name],
             Cfg = schema_to_cfg(I, FullPath, undefined),
             write(Db, Cfg),
             insert_path_items(Db, Is, Value, FullPath);
 
         %% List items
-        #{rec_type := schema, node_type := list, name := Name,
+        #{role := schema, node_type := list, name := Name,
           key_names := Keys, key_values := KVs} ->
             FullPath = Path ++ [Name],
             Key = list_to_tuple(KVs),
@@ -156,14 +156,14 @@ insert_path_items(Db, [I | Is], Value, Path) ->
             insert_path_items(Db, Is, Value, ListItemsPath);
 
         %% Leafs of both kinds
-        #{rec_type := schema, node_type := Leaf, name := Name}
+        #{role := schema, node_type := Leaf, name := Name}
           when ?is_leaf(Leaf) ->
             FullPath = Path ++ [Name],
             Cfg = schema_to_cfg(I, FullPath, Value),
             write(Db, Cfg)
     end.
 
-insert_list_keys(Db, Path, #{rec_type := schema, key_names := KeyNames,
+insert_list_keys(Db, Path, #{role := schema, key_names := KeyNames,
                                         key_values := KeyValues}) ->
     NVPairs = lists:zip(KeyNames, KeyValues),
     lists:foreach(fun({Name, Value}) ->
@@ -182,7 +182,7 @@ check_conflict(Db, Is, Value) ->
 
 check_conflict(Db, [I|Is], Value, Path) ->
     case I of
-        #{rec_type := schema, node_type := container, name := Name} ->
+        #{role := schema, node_type := container, name := Name} ->
             FullPath = Path ++ [Name],
             case read(Db, FullPath) of
                 [] ->
@@ -192,7 +192,7 @@ check_conflict(Db, [I|Is], Value, Path) ->
                 [#cfg{}] ->
                     {error, "schema conflict"}
             end;
-        #{rec_type := schema, node_type := list, name := Name,
+        #{role := schema, node_type := list, name := Name,
           key_values := KVs} ->
             FullPath = Path ++ [Name],
             case read(Db, FullPath) of
@@ -218,7 +218,7 @@ check_conflict(Db, [I|Is], Value, Path) ->
                 [#cfg{}] ->
                     {error, "list item schema conflict"}
             end;
-        #{rec_type := schema, node_type := Leaf, name := Name} when
+        #{role := schema, node_type := Leaf, name := Name} when
               Leaf == leaf;
               Leaf == leaf_list ->
             FullPath = Path ++ [Name],
@@ -257,7 +257,7 @@ validate_set_list_keys(Db, Path, [{Name, _Value}|Ks]) ->
 
 %% Create a cfg record sutable to insert in the database from the schema
 %% record and the full path and value.
-schema_to_cfg(#{rec_type := schema,
+schema_to_cfg(#{role := schema,
                 node_type := NodeType, name := Name}, Path, Value) ->
     #cfg{node_type = NodeType,
          name = Name,
@@ -265,7 +265,7 @@ schema_to_cfg(#{rec_type := schema,
          value = Value
         }.
 
-schema_list_key_to_cfg(#{rec_type := schema, key_names := KNs} = C, Path, Key) ->
+schema_list_key_to_cfg(#{role := schema, key_names := KNs} = C, Path, Key) ->
     #cfg{node_type = list_key,
          name = Key,
          path = Path,
@@ -273,7 +273,7 @@ schema_list_key_to_cfg(#{rec_type := schema, key_names := KNs} = C, Path, Key) -
         }.
 
 schema_path_to_key(Path) ->
-    lists:map(fun(#{rec_type := schema, name := Name}) ->
+    lists:map(fun(#{role := schema, name := Name}) ->
                       Name
               end, Path).
 

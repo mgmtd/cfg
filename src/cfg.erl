@@ -125,11 +125,11 @@ lookup(Path) ->
 
 
 schema_list_to_path(SchemaItems) ->
-    lists:map(fun(#{rec_type := schema, name := Name}) -> Name end, SchemaItems).
+    lists:map(fun(#{role := schema, name := Name}) -> Name end, SchemaItems).
 
-schema_list_to_path([#{rec_type := schema} = Last], Acc) ->
+schema_list_to_path([#{role := schema} = Last], Acc) ->
     {Last, lists:reverse(Acc)};
-schema_list_to_path([#{rec_type := schema, name := Name} | Ss], Acc) ->
+schema_list_to_path([#{role := schema, name := Name} | Ss], Acc) ->
     schema_list_to_path(Ss, [Name | Acc]).
 
 
@@ -160,7 +160,7 @@ container(Name, Desc, Children) ->
     container(Name, Desc, Children, []).
 
 container(Name, Desc, Children, Opts) ->
-    #{rec_type => schema,
+    #{role => schema,
       node_type => container,
       name => Name,
       desc => Desc,
@@ -173,7 +173,7 @@ list(Name, Desc, Key, Children) ->
     list(Name, Desc, Key, Children, []).
 
 list(Name, Desc, KeyNames, Children, Opts) when is_list(KeyNames) ->
-    #{rec_type => schema,
+    #{role => schema,
       node_type => list,
       name => Name,
       desc => Desc,
@@ -186,7 +186,7 @@ leaf_list(Name, Desc, Type) ->
     leaf_list(Name, Desc, Type, []).
 
 leaf_list(Name, Desc, Type, Opts) ->
-    #{rec_type => schema,
+    #{role => schema,
       node_type => leaf_list,
       name => Name,
       desc => Desc,
@@ -198,7 +198,7 @@ leaf(Name, Desc, Type, Default) ->
     leaf(Name, Desc, Type, Default, []).
 
 leaf(Name, Desc, Type, Default, Opts) ->
-    #{rec_type => schema,
+    #{role => schema,
       node_type => leaf,
       name => Name,
       desc => Desc,

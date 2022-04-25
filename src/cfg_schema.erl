@@ -197,7 +197,7 @@ call_generator({M, F}) ->
 expand_nodes(Nodes) ->
     expand_nodes(Nodes, [], []).
 
-expand_nodes([#{rec_type := schema, node_type := container,
+expand_nodes([#{role := schema, node_type := container,
                 name := Name, children := Cs} = T|Ts], Path, Acc) ->
     Children = eval_children(Cs),
     ThisPath = [Name | Path],
@@ -205,7 +205,7 @@ expand_nodes([#{rec_type := schema, node_type := container,
     T1 = SchemaEntry#cfg_schema{children = expand_nodes(Children, ThisPath, []),
                                 path = lists:reverse(ThisPath)},
     expand_nodes(Ts, Path, [T1|Acc]);
-expand_nodes([#{rec_type := schema, node_type := list,
+expand_nodes([#{role := schema, node_type := list,
                 children := Cs, name := Name} = T|Ts], Path, Acc) ->
     Children = eval_children(Cs),
     ThisPath = [Name | Path],
@@ -213,7 +213,7 @@ expand_nodes([#{rec_type := schema, node_type := list,
     T1 = SchemaEntry#cfg_schema{children = expand_nodes(Children, ThisPath, []),
                                 path = lists:reverse(ThisPath)},
     expand_nodes(Ts, Path, [T1|Acc]);
-expand_nodes([#{rec_type := schema, node_type := Leaf, name := Name} = T|Ts],
+expand_nodes([#{role := schema, node_type := Leaf, name := Name} = T|Ts],
              Path, Acc) when Leaf == leaf; Leaf == leaf_list ->
     SchemaEntry = map_to_schema(T),
     ThisPath = [Name | Path],
@@ -229,14 +229,14 @@ eval_children(Fn) when is_function(Fn) ->
 eval_children({M,F}) ->
     M:F().
 
-map_to_schema(#{rec_type := schema,
+map_to_schema(#{role := schema,
                 node_type := container, name := Name} = M) ->
     #cfg_schema{node_type = container,
                 name = Name,
                 desc = maps:get(desc, M, ""),
                 opts = extra_map_keys(M)
                };
-map_to_schema(#{rec_type := schema, node_type := list,
+map_to_schema(#{role := schema, node_type := list,
                 name := Name, key_names := KeyNames} = M) ->
     #cfg_schema{node_type = list,
                 name = Name,
@@ -244,7 +244,7 @@ map_to_schema(#{rec_type := schema, node_type := list,
                 key_names = KeyNames,
                 opts = extra_map_keys(M)
                };
-map_to_schema(#{rec_type := schema, node_type := Leaf, name := Name,
+map_to_schema(#{role := schema, node_type := Leaf, name := Name,
                 type := Type} = M) when Leaf == leaf;
                                         Leaf == leaf_list ->
     #cfg_schema{node_type = Leaf,
@@ -262,14 +262,14 @@ map_to_schema(#{rec_type := schema, node_type := Leaf, name := Name,
 extra_map_keys(Map) ->
     StandardKeys = record_info(fields, cfg_schema),
     MapKeys = maps:keys(Map),
-    ExtraKeys = MapKeys -- [rec_type | StandardKeys],
+    ExtraKeys = MapKeys -- [role | StandardKeys],
     lists:foldl(fun(Key, OptMap) ->
                         #{Key := Value} = Map,
                         maps:put(Key, Value, OptMap)
                 end, #{}, ExtraKeys).
 
 schema_to_map(#cfg_schema{opts = Opts, path = Path} = S) ->
-    Map = #{rec_type => schema,
+    Map = #{role => schema,
             path => Path,
             node_type => S#cfg_schema.node_type,
             name => S#cfg_schema.name,
