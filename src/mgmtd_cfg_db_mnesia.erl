@@ -6,11 +6,11 @@
 %%% @end
 %%% Created :  1 Oct 2019 by Sean Hinde <sean@Seans-MacBook.local>
 %%%-------------------------------------------------------------------
--module(cfg_backend_mnesia).
+-module(mgmtd_cfg_db_mnesia).
 
--include("cfg.hrl").
+-include("mgmtd_schema.hrl").
 
--export([init/1, remove_db/1]).
+-export([init/2, remove_db/1]).
 
 -export([copy_to_ets/0]).
 
@@ -33,9 +33,8 @@
 
 %% @doc initialise the mnesia backend in a standard directory relative
 %% to the working directory of the erlang node ("database")
--spec init(proplists:proplist()) -> ok.
-init(Opts) ->
-    Dir = proplists:get_value(db_path, Opts, "database"),
+-spec init(file:filename(), proplists:proplist()) -> ok.
+init(Dir, Opts) ->
     Nodes = proplists:get_value(nodes, Opts, [node()]),
     init_db(Dir, Nodes).
 

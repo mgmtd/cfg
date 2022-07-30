@@ -1,0 +1,16 @@
+{application, mgmtd,
+ [{description, "A schema driven configuration and operational data management system"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, {mgmtd_app, []}},
+  {applications,
+   [kernel,
+    stdlib,
+    jsx
+   ]},
+  {env,[]},
+  {modules, []},
+
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.

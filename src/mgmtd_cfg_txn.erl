@@ -6,9 +6,10 @@
 %%% @end
 %%% Created : 18 Sep 2019 by Sean Hinde <sean@Seans-MacBook.local>
 %%%-------------------------------------------------------------------
--module(cfg_txn).
+-module(mgmtd_cfg_txn).
 
--include("cfg.hrl").
+-include("../include/mgmtd.hrl").
+-include("mgmtd_schema.hrl").
 
 -record(cfg_txn,
         {
@@ -26,7 +27,7 @@
 new() ->
     TxnId = erlang:unique_integer(),
     #cfg_txn{txn_id = TxnId,
-             ets_copy = cfg_db:copy_to_ets()
+             ets_copy = mgmtd_cfg_db:copy_to_ets()
             }.
 
 exit_txn(#cfg_txn{ets_copy = EtsCopy}) ->
@@ -35,15 +36,15 @@ exit_txn(#cfg_txn{ets_copy = EtsCopy}) ->
 
 
 %% @doc commit the operations stored up in the configuration transaction
-commit(#cfg_txn{ets_copy = Copy, ops = Ops}) ->
+commit(#cfg_txn{ets_copy = _Copy, ops = Ops}) ->
     Fun = fun() ->
                   lists:foreach(fun({set, Path, Value}) ->
-                                    cfg_db:insert_path_items(permanent, Path, Value);
+                                    mgmtd_cfg_db:insert_path_items(permanent, Path, Value);
                                (_) ->
                                     ok
                             end, Ops)
           end,
-    cfg_db:transaction(Fun).
+    mgmtd_cfg_db:transaction(Fun).
 
 -spec get(#cfg_txn{}, cfg:path()) -> {ok, cfg:value()} | undefined.
 get(#cfg_txn{ets_copy = Copy}, Path) ->
@@ -51,18 +52,20 @@ get(#cfg_txn{ets_copy = Copy}, Path) ->
         [#cfg{value = Value}] ->
             {ok, Value};
         [] ->
-            cfg_schema:lookup_default(Path)
+            mgmtd_schema:get_default(Path)
     end.
 
+get_tree(undefined, Path) ->
+    get_tree(#cfg_txn{ets_copy = cfg}, Path);
 get_tree(#cfg_txn{ets_copy = Copy}, Path) ->
     %% ?DBG("Path = ~p~n",[Path]),
-    Key = cfg_db:schema_path_to_key(Path),
+    Key = mgmtd_cfg_db:schema_path_to_key(Path),
     Rows = ets:match_object(Copy, #cfg{path = Key ++ '_', _ = '_'}),
     SubRows = drop_path_prefix(Key, Rows),
     %% ?DBG("Selected Rows ~p~n",[SubRows]),
-    Tree = cfg_db:cfg_list_to_tree(SubRows),
+    Tree = mgmtd_cfg_db:cfg_list_to_tree(SubRows),
     %% ?DBG("Tree ~p~n",[Tree]),
-    SimpleTree = cfg_db:simplify_tree(Tree),
+    SimpleTree = mgmtd_cfg_db:simplify_tree(Tree),
     %% ?DBG("Simple Tree ~p~n",[SimpleTree]),
     SimpleTree.
 
@@ -78,13 +81,18 @@ drop_path_prefix(Path, Rows) ->
 
 % -spec set(#cfg_txn{}, [#cfg_schema{}], term()) -> ok | {error, String()}.
 set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
-    case cfg_db:check_conflict({ets, Copy}, Path, Value) of
-        ok ->
-            cfg_db:insert_path_items({ets, Copy}, Path, Value),
-            %%v?DBG("ets content: ~p~n",[ets:tab2list(Copy)]),
-            {ok, Txn#cfg_txn{ops = [{set, Path, Value} | Ops]}};
+    case mgmtd_schema:cast_value(Path, Value) of
+        {ok, InternalValue} ->
+            case mgmtd_cfg_db:check_conflict({ets, Copy}, Path, InternalValue) of
+                ok ->
+                    mgmtd_cfg_db:insert_path_items({ets, Copy}, Path, InternalValue),
+                    %%v?DBG("ets content: ~p~n",[ets:tab2list(Copy)]),
+                    {ok, Txn#cfg_txn{ops = [{set, Path, InternalValue} | Ops]}};
+                {error, Reason} ->
+                    ?DBG(Reason),
+                    {error, Reason}
+            end;
         {error, Reason} ->
-            ?DBG(Reason),
             {error, Reason}
     end.
 

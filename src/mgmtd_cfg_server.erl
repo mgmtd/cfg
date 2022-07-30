@@ -6,16 +6,16 @@
 %%% @end
 %%% Created : 12 Sep 2019 by Sean Hinde <sean@Seans-MacBook.local>
 %%%-------------------------------------------------------------------
--module(cfg_server).
+-module(mgmtd_cfg_server).
 
 -behaviour(gen_server).
 
--include("cfg.hrl").
+-include("mgmtd_schema.hrl").
 
 %% API
--export([start_link/0, load_schema/2, remove_schema/1,
+-export([start_link/0,
          commit/1,
-         subscribe/3,
+         subscribe/2,
          unsubscribe/1,
          show_subscriptions/0, subscriptions/0]).
 
@@ -47,22 +47,16 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-%% @doc load a pre-parsed schema
-load_schema(NS, ParsedSchema) ->
-    gen_server:call(?MODULE, {load_schema, NS, ParsedSchema}).
 
-remove_schema(NS) ->
-    gen_server:call(?MODULE, {remove_schema, NS}).
-
-subscribe(Path, Pid, Opts) when is_pid(Pid); is_atom(Pid); is_list(Opts) ->
-    gen_server:call(?SERVER, {subscribe, Path, Pid, Opts}).
+subscribe(Path, Pid) when is_pid(Pid); is_atom(Pid) ->
+    gen_server:call(?SERVER, {subscribe, Path, Pid}).
 
 unsubscribe(Ref) ->
     gen_server:call(?SERVER, {unsubscribe, Ref}).
 
 show_subscriptions() ->
     Subscriptions = subscriptions(),
-    lists:foreach(fun({{Path, Pid,_Ref}, _Opts}) ->
+    lists:foreach(fun({Path, Pid,_Ref}) ->
                           io:format("~p => ~p~n",[Pid, Path])
                   end, Subscriptions).
 
@@ -89,7 +83,6 @@ commit(Txn) ->
                               ignore.
 init([]) ->
     process_flag(trap_exit, true),
-    cfg_schema:init(),
     {ok, #state{}}.
 
 %%--------------------------------------------------------------------
@@ -107,22 +100,17 @@ init([]) ->
                          {noreply, NewState :: term(), hibernate} |
                          {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
                          {stop, Reason :: term(), NewState :: term()}.
-handle_call({load_schema, NS, ParsedSchema}, _From, State) ->
-    Reply = cfg_schema:install_schema(NS, ParsedSchema),
-    {reply, Reply, State};
-handle_call({remove_schema, NS}, _From, State) ->
-    Reply = cfg_schema:remove_schema(NS),
-    {reply, Reply, State};
-handle_call({subscribe, Path, Pid, Opts}, _From, State) ->
-    case subscription_message(Path) of
+handle_call({subscribe, Path, Pid}, _From, State) ->
+    case initial_subscription_message(Path) of
         {error, _Reason} = Err ->
             {reply, Err, State};
         {ok, Config} ->
             Ref = erlang:make_ref(),
             MonRef = erlang:monitor(process, Pid),
-            ets:insert(State#state.subs, {{Path, Pid, Ref}, Opts}),
+            ets:insert(State#state.subs, {{Path, Pid, Ref}, []}),
             ets:insert(State#state.sub_refs, {Ref, {Path, Pid, MonRef}}),
             ets:insert(State#state.sub_pids, {Pid, {Path, Ref}}),
+            %%io:format(user, "Sending subscribe subscription messages ~p~n", [{Pid, {updated_config, Ref, Config}}]),
             Pid ! {updated_config, Ref, Config},
             {reply, {ok, Ref}, State}
     end;
@@ -142,9 +130,10 @@ handle_call(get_subscriptions, _From, State) ->
     {reply, Subs, State};
 handle_call({commit, Txn}, _From, State) ->
     %% Generate all subscription messages
-    Subscriptions = ets:tab2list(State#state.subs),
+    Subscriptions = [K || {K,[]} <- ets:tab2list(State#state.subs)],
+    %% io:format(user, "with subscriptions ~p~n", [Subscriptions]),
     Messages = subscription_messages(Subscriptions, Txn),
-    case cfg_txn:commit(Txn) of
+    case mgmtd_cfg_txn:commit(Txn) of
         ok ->
             send_subscription_messages(Messages),
             {reply, ok, State};
@@ -245,9 +234,11 @@ format_status(_Opt, Status) ->
 %%% Internal functions
 %%%===================================================================
 
+
 %% Provide an initial value for a subscription based on committed config
-subscription_message(Path) ->
-    case cfg_schema:lookup(Path) of
+initial_subscription_message(Path) ->
+    %% io:format(user, "Initisl Looking up path ~p~n", [mgmtd_schema:lookup(Path)]),
+    case mgmtd_schema:lookup(Path) of
         #{node_type := list} ->
             case lists:last(Path) of
                 Last when is_tuple(Last) ->
@@ -258,7 +249,8 @@ subscription_message(Path) ->
                             {ok, Vals}
                     end;
                 _ ->
-                    {ok, cfg_db:list_keys(Path)}
+                    %% io:format(user, "Initial  ~p~n", [mgmtd_cfg_db:list_keys(Path)]),
+                    {ok, mgmtd_cfg_db:list_keys(Path)}
             end;
         #{node_type := container} ->
             case container_values(Path) of
@@ -276,9 +268,9 @@ subscription_message(Path) ->
             end
     end.
 
-
+%% Subscription messages on transaction commit
 subscription_messages(Subscriptions, Txn) ->
-    lists:foldl(fun({{Path, Pid, Ref}, _Opts}, Acc) ->
+    lists:foldl(fun({Path, Pid, Ref}, Acc) ->
                         case subscription_message(Path, Txn) of
                             false ->
                                 Acc;
@@ -287,15 +279,18 @@ subscription_messages(Subscriptions, Txn) ->
                         end
                 end, [], Subscriptions).
 
+%% Given the subscribed path ["path", "to", "elem"] and
+%% a Txn containing operations as Schema path as a list of #schema maps
+%% 
 subscription_message(Path, Txn) ->
-    case cfg_schema:lookup(Path) of
+    case mgmtd_schema:lookup(Path) of
         #{node_type := list} ->
             case lists:last(Path) of
                 Last when is_tuple(Last) ->
                     container_values(Path, Txn);
                 _ ->
-                    New = cfg_txn:list_keys(Txn, Path, '$1'),
-                    Existing = cfg_db:list_keys(Path),
+                    New = mgmtd_cfg_txn:list_keys(Txn, Path, '$1'),
+                    Existing = mgmtd_cfg_db:list_keys(Path),
                     if New == Existing ->
                             false;
                        true ->
@@ -312,12 +307,11 @@ container_values(Path) ->
     container_values(Path, undefined).
 
 container_values(Path, Txn) ->
-    Children = cfg_schema:children(Path),
+    Children = mgmtd_schema:children(Path),
     LeafChildren = lists:filter(fun(#{node_type := Leaf}) ->
                                         Leaf == leaf orelse Leaf == leaf_list
                                 end, Children),
     CVs = lists:foldl(fun(#{name := N}, Acc) ->
-                              io:format(user, "leaf value ~p ~p~n",[Path ++ [N], leaf_value(Path ++ [N], Txn)]),
                               case leaf_value(Path ++ [N], Txn) of
                                   {ok, Val} ->
                                       [{N, Val} | Acc];
@@ -336,15 +330,15 @@ leaf_value(Path) ->
     leaf_value(Path, undefined).
 
 leaf_value(Path, undefined) ->
-    case cfg_db:lookup(Path) of
+    case mgmtd_cfg_db:lookup(Path) of
         [#cfg{value = Val}] ->
             {ok, Val};
         [] ->
             false
     end;
 leaf_value(Path, Txn) ->
-    {ok, New} = cfg_txn:get(Txn, Path),
-    Old = case cfg_db:lookup(Path) of
+    {ok, New} = mgmtd_cfg_txn:get(Txn, Path),
+    Old = case mgmtd_cfg_db:lookup(Path) of
               [#cfg{value = Val}] ->
                   Val;
               [] ->

@@ -17,7 +17,7 @@
 %%% @end
 %%% Created : 27 Sep 2019 by Sean Hinde <sean@Seans-MacBook.local>
 %%%-------------------------------------------------------------------
--module(cfg_backend_config).
+-module(mgmtd_cfg_db_config).
 
 -export([init/1]).
 
@@ -32,7 +32,7 @@
 -export([ets_to_file/1, ets_to_file/2]).
 -export([file_to_ets/1, file_to_ets/2]).
 
--include("cfg.hrl").
+-include("mgmtd_schema.hrl").
 
 %%--------------------------------------------------------------------
 %% API
@@ -119,7 +119,7 @@ load_ets(Ets, Fd) ->
     Line = file:read_line(Fd),
     case parse_line(Line) of
         {ok, Path, Value} ->
-            case cfg_schema:validate(Path, Value) of
+            case mgmtd_schema:validate(Path, Value) of
                 ok ->
                     ok
             end

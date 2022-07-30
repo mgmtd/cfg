@@ -6,9 +6,9 @@
 %%% @end
 %%% Created : 20 Sep 2019 by Sean Hinde <sean@Seans-MacBook.local>
 %%%-------------------------------------------------------------------
--module(cfg_db).
+-module(mgmtd_cfg_db).
 
--include("cfg.hrl").
+-include("mgmtd_schema.hrl").
 
 -export([init/2, remove_db/2, transaction/1, copy_to_ets/0]).
 
@@ -28,17 +28,19 @@
 %% @doc Called once at startup to allow the chosen database backend to
 %% create tables etc.
 %% --------------------------------------------------------------------
--spec init(mnesia | config, proplists:proplist()) -> ok.
-init(Backend, Opts) when Backend == mnesia;
-                         Backend == config ->
+-spec init(file:filename(), proplists:proplist()) -> ok.
+init(DbLocation, Opts) ->
+    Backend = proplists:get_value(backend, Opts, json),
     BackendMod = backend_mod(Backend),
-    BackendMod:init(Opts),
-    ets:insert(cfg_meta, {backend, BackendMod}).
+    BackendMod:init(DbLocation, Opts),
+    ets:insert(mgmtd_meta, {backend, BackendMod}),
+    ets:insert(mgmtd_meta, {db_location, DbLocation}).
 
-remove_db(Backend, Opts) ->
+remove_db(DbLocation, Backend) ->
     BackendMod = backend_mod(Backend),
-    BackendMod:remove_db(Opts),
-    ets:delete(cfg_meta, {backend, BackendMod}).
+    BackendMod:remove_db(DbLocation),
+    ets:delete(mgmtd_meta, db_location),
+    ets:delete(mgmtd_meta, backend).
 
 transaction(Fun) when is_function(Fun) ->
     BackendMod = backend(),
@@ -83,15 +85,12 @@ copy_to_ets() ->
     BackendMod:copy_to_ets().
 
 backend() ->
-    case ets:lookup(cfg_meta, backend) of
-        [{_, Mod}] ->
-            Mod;
-        _ ->
-            cfg_backend_mnesia
-    end.
+    [{_, Mod}] = ets:lookup(mgmtd_meta, backend),
+    Mod.
 
-backend_mod(mnesia) -> cfg_backend_mnesia;
-backend_mod(config) -> cfg_backend_config.
+backend_mod(mnesia) -> mgmtd_cfg_db_mnesia;
+backend_mod(json)   -> mgmtd_cfg_db_json;
+backend_mod(config) -> mgmtd_cfg_db_config.
 
 
 %% Insert all the database items required for a single configuration
@@ -123,7 +122,7 @@ backend_mod(config) -> cfg_backend_config.
 %% 3. Hm
 %%
 %% Insert a single entry in the database.
--spec insert_path_items(ets:tid(), [#cfg_schema{}], term()) -> ok.
+-spec insert_path_items(ets:tid(), [#schema{}], term()) -> ok.
 insert_path_items(Db, Is, Value) ->
     insert_path_items(Db, Is, Value, []).
 
@@ -287,19 +286,19 @@ schema_path_to_key(Path) ->
 %% -------------------------------------------------------------------
 -spec cfg_list_to_tree([#cfg{}]) -> [#cfg{}].
 cfg_list_to_tree(Cfgs) ->
-    cfg_list_to_tree(Cfgs, cfg_zntrees:root(root)).
+    cfg_list_to_tree(Cfgs, mgmtd_zntrees:root(root)).
 
 cfg_list_to_tree([Cfg|Cfgs], Z) ->
-    Z1 = zntree_insert_item(Cfg, cfg_zntrees:children(Z)),
+    Z1 = zntree_insert_item(Cfg, mgmtd_zntrees:children(Z)),
     cfg_list_to_tree(Cfgs, Z1);
 cfg_list_to_tree([], Z) ->
     %% Finally extract a simple cfg tree from the zntree, skipping root
-    zntree_to_cfg_tree(cfg_zntrees:children(Z)).
+    zntree_to_cfg_tree(mgmtd_zntrees:children(Z)).
 
 % Insert an item in the zntree. Z points to the children of the root node
 zntree_insert_item(#cfg{path = Path} = Cfg, Z) ->
     Z1 = zntree_node_at_path(Path, Z),
-    Z2 = cfg_zntrees:insert(Cfg, Z1),
+    Z2 = mgmtd_zntrees:insert(Cfg, Z1),
     %% Z2 now points to our new node. Point it back to the root node ready
     %% for another item to be inserted
     zntree_root(Z2).
@@ -309,21 +308,21 @@ zntree_node_at_path([_Path], Z) ->
     Z;
 zntree_node_at_path([P|Ps], Z) ->
     Z1 = zntree_search(P, Z),
-    Z2 = cfg_zntrees:children(Z1),
+    Z2 = mgmtd_zntrees:children(Z1),
     zntree_node_at_path(Ps, Z2).
 
 %% Horizontal search left to right. Node must exist
 zntree_search(P, Z) ->
-    case cfg_zntrees:value(Z) of
+    case mgmtd_zntrees:value(Z) of
         #cfg{name = P} ->
             Z;
         #cfg{} ->
-            zntree_search(P, cfg_zntrees:right(P, Z))
+            zntree_search(P, mgmtd_zntrees:right(P, Z))
     end.
 
 zntree_root(Z) ->
-    Z1 = cfg_zntrees:parent(Z),
-    case cfg_zntrees:value(Z1) of
+    Z1 = mgmtd_zntrees:parent(Z),
+    case mgmtd_zntrees:value(Z1) of
         root ->
             Z1;
         _ ->
@@ -331,7 +330,7 @@ zntree_root(Z) ->
     end.
 
 %% Convert the zntree of our cfg records into a tree of #cfg{} records
--spec zntree_to_cfg_tree(cfg_zntrees:zntree()) -> list().
+-spec zntree_to_cfg_tree(mgmtd_zntrees:zntree()) -> list().
 zntree_to_cfg_tree(Zntree) ->
     %% ?DBG("zn:~p~n",[Zntree]),
     zntree_to_cfg_tree(Zntree, []).
@@ -339,15 +338,15 @@ zntree_to_cfg_tree(Zntree) ->
 zntree_to_cfg_tree({_Thread, {_Left, _Right = []}}, Acc) ->
     Acc;
 zntree_to_cfg_tree(Z, Acc) ->
-    case cfg_zntrees:value(Z) of
+    case mgmtd_zntrees:value(Z) of
         #cfg{node_type = Leaf} = Cfg when Leaf == leaf; Leaf == leaf_list ->
-            zntree_to_cfg_tree(cfg_zntrees:right(Z), [Cfg | Acc]);
+            zntree_to_cfg_tree(mgmtd_zntrees:right(Z), [Cfg | Acc]);
         #cfg{node_type = NT} = Cfg when NT == container; NT == list;
                                         NT == list_key ->
             Acc1 = [Cfg#cfg{value =
-                                zntree_to_cfg_tree(cfg_zntrees:children(Z), [])}
+                                zntree_to_cfg_tree(mgmtd_zntrees:children(Z), [])}
                     | Acc],
-            zntree_to_cfg_tree(cfg_zntrees:right(Z), Acc1)
+            zntree_to_cfg_tree(mgmtd_zntrees:right(Z), Acc1)
     end.
 
 simplify_tree([#cfg{node_type = container, name = Name, value = Children} |Ts]) ->

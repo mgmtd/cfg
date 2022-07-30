@@ -6,9 +6,9 @@
 %%% @end
 %%% Created : 25 Sep 2019 by Sean Hinde <sean@Seans-MacBook.local>
 %%%-------------------------------------------------------------------
--module(cfg_db_test).
+-module(mgmtd_db_test).
 
--include("../src/cfg.hrl").
+-include("../src/mgmtd_schema.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -42,6 +42,6 @@ expected_tree() ->
                     value = e_val}]}].
 
 cfg_db_to_tree_test_() ->
-    Tree = cfg_db:cfg_list_to_tree(configs()),
+    Tree = mgmtd_cfg_db:cfg_list_to_tree(configs()),
     Expected = expected_tree(),
     ?_assertEqual(Expected, Tree).

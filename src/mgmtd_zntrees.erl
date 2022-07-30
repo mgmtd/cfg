@@ -6,7 +6,7 @@
 %%% @end
 %%% Created : 26 Sep 2019 by Sean Hinde <sean@Seans-MacBook.local>
 %%%-------------------------------------------------------------------
--module(cfg_zntrees).
+-module(mgmtd_zntrees).
 
 -export([root/1, value/1,
          replace/2, insert/2, delete/1,
