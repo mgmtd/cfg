@@ -55,7 +55,7 @@
 -spec load_json_schema_file(FilePath :: file:filename()) ->
                                ok | {error, Reason :: term()}.
 load_json_schema_file(File) ->
-    mgmtd_schema_json_draft4:load_file(File, #{config => true}).
+    mgmtd_schema_json_draft4:load_file(File).
 
 -spec load_json_schema_file(FilePath :: file:filename(), Opts :: map()) ->
                                ok | {error, Reason :: term()}.
@@ -267,6 +267,8 @@ int32_range() -> [{min, -2147483648}, {max, 2147483647}].
 int16_range() -> [{min, -32768}, {max, 32767}].
 int8_range() -> [{min, -128}, {max, 127}].
 
+cast_integer(Int, Range) when is_integer(Int) ->
+    cast_integer_in_range(Int, Range);
 cast_integer(Token, Range) ->
     case catch list_to_integer(Token) of
         {'EXIT', _} ->

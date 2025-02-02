@@ -17,7 +17,11 @@ load_file(File, Opts) ->
 load_json_schema(#{<<"$schema">> := <<"http://json-schema.org/draft-04/schema#">>} = Schema,
                  Opts) ->
     NameSpace = maps:get(namespace, Opts, ?DEFAULT_NS),
-    ets:new(NameSpace, [named_table, {keypos, #schema.path}]),
+    case ets:info(NameSpace, id) of
+      undefined ->
+        ets:new(NameSpace, [named_table, {keypos, #schema.path}]);
+        _ -> ok
+    end,
     load_json_schema(Schema, [], NameSpace, Opts).
 
 load_json_schema(#{<<"properties">> := Props}, Path, Ns, Opts) ->
@@ -25,9 +29,9 @@ load_json_schema(#{<<"properties">> := Props}, Path, Ns, Opts) ->
 
 load_json_properties(Props, Path, Ns, Opts) ->
     maps:foreach(fun(K, V) ->
-    Name = binary_to_list(K),
-     load_json_property(V, Name, [Name | Path], Ns, Opts) end,
-                 Props).
+                    Name = binary_to_list(K),
+                    load_json_property(V, Name, [Name | Path], Ns, Opts)
+                 end, Props).
 
 load_json_property(#{<<"type">> := <<"object">>} = Object,
                           Key,
@@ -66,6 +70,7 @@ load_json_property(#{<<"type">> := <<"array">>} = Object,
                         default = Default,
                         min_elements = maps:get(<<"minItems">>, Item, undefined),
                         max_elements = maps:get(<<"maxItems">>, Item, undefined),
+                        data_callback = maps:get(callback, Opts, mgmtd),
                         mandatory = true,
                         config = Config
                         },
@@ -83,7 +88,7 @@ load_json_property(#{<<"type">> := <<"array">>} = Object,
                     #{<<"keys">> := ListKeys} ->
                         %% FIXME: check that ListKeys are indeed present in the
                         %% properties of this array
-                        ListKeys;
+                        lists:map(fun(LK) -> binary_to_list(LK) end, ListKeys);
                     _ when Config ->
                         IndexLeaf = generated_index_leaf(Path, Config),
                         true = ets:insert_new(Ns, IndexLeaf),
@@ -102,9 +107,11 @@ load_json_property(#{<<"type">> := <<"array">>} = Object,
                         min_elements = maps:get(<<"minItems">>, Object, 0),
                         max_elements = maps:get(<<"maxItems">>, Object, undefined),
                         mandatory = false,
+                        data_callback = maps:get(callback, Opts, mgmtd),
                         config = Config},
             true = ets:insert_new(Ns, List),
-            load_json_properties(maps:get(properties, Object, #{}), Path, Ns, Opts),
+            Items = maps:get(<<"items">>, Object),
+            load_json_properties(maps:get(<<"properties">>, Items), Path, Ns, Opts),
             ok
     end;
 load_json_property(#{} = Item, Key, Path, Ns, #{config := Config}) ->
@@ -146,12 +153,14 @@ is_leaf_list_array(Object) ->
             true
     end.
 
+json_item_type(#{<<"type">> := <<"integer">>}) ->
+    int32;
 json_item_type(#{<<"type">> := Type}) ->
-    Type;
+    binary_to_atom(Type);
 json_item_type(#{<<"pattern">> := _Pattern}) ->
     %% No type specified, but 'pattern' is only defined for strings
     %% JSON schema sure is permissive..
-    <<"string">>.
+    string.
 
 json_default(_Type, #{<<"default">> := Default}) ->
     Default;

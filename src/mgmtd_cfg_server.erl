@@ -237,7 +237,7 @@ format_status(_Opt, Status) ->
 
 %% Provide an initial value for a subscription based on committed config
 initial_subscription_message(Path) ->
-    %% io:format(user, "Initisl Looking up path ~p~n", [mgmtd_schema:lookup(Path)]),
+    %% io:format(user, "Initial Looking up path ~p~n", [mgmtd_schema:lookup(Path)]),
     case mgmtd_schema:lookup(Path) of
         #{node_type := list} ->
             case lists:last(Path) of

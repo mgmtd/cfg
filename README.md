@@ -45,3 +45,10 @@ Build
 -----
 
     $ rebar3 compile
+
+TODO
+---
+
+- [ ] Fix completion of existing list keys
+- [ ] Add multiple namespace support with prefixes to handle name clashes at the same level
+- [ ] Finish enum support

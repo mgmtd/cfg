@@ -7,7 +7,10 @@
 
 -export([start/0]).
 
--export([subscribe/2, load_json_schema/2, load_function_schema/1, load_config_db/1]).
+-export([subscribe/2,
+         load_json_schema/1, load_json_schema/2,
+         load_function_schema/1, load_function_schema/2,
+         load_config_db/1]).
 %% Transaction API
 -export([txn_new/0, txn_exit/1, txn_set/2, txn_show/2, txn_commit/1]).
 %% Schema API
@@ -44,6 +47,9 @@ start() ->
 %% config => true | false (default true)
 %% callback => Module::atom()
 %% namespace => NameSpace::string()
+
+load_json_schema(File) ->
+    mgmtd_schema:load_json_schema_file(File, #{config => true}).
 load_json_schema(File, Opts) when is_map(Opts) ->
     mgmtd_schema:load_json_schema_file(File, Opts).
 
@@ -51,6 +57,9 @@ load_json_schema(File, Opts) when is_map(Opts) ->
 %%
 load_function_schema(Fun) ->
     mgmtd_schema:load_function_schema(Fun, #{}).
+
+load_function_schema(Fun, Opts) ->
+    mgmtd_schema:load_function_schema(Fun, Opts).
 
 %% @doc Load the configuration database.
 %% Call this function after loading the schema(s) early

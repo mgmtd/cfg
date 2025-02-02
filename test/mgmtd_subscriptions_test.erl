@@ -136,7 +136,7 @@ subscription_test_() ->
              %% And now the updated port number 8080
              receive
                  {updated, Updated3} ->
-                     ?_assertEqual([{"port",8080},{"host","127.0.0.1"}],
+                     ?_assertEqual([{"host","127.0.0.1"}, {"port",8080}],
                                    Updated3)
              after 200 ->
                      exit(subscription_not_received)
