@@ -111,6 +111,7 @@ txn_set_operations(Txn, [{Path, Value} | Ops]) ->
     end.
 
 txn_show(Txn, SchemaPath) ->
+    ?DBG("TXN SHOW ~p~n", [SchemaPath]),
     Tree = mgmtd_cfg_txn:get_tree(Txn, SchemaPath),
     {ok, Tree}.
 

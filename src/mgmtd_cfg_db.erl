@@ -272,9 +272,11 @@ schema_list_key_to_cfg(#{role := schema, key_names := KNs} = C, Path, Key) ->
         }.
 
 schema_path_to_key(Path) ->
-    lists:map(fun(#{role := schema, name := Name}) ->
-                      Name
-              end, Path).
+    lists:foldl(fun(#{role := schema, node_type := list, key_values := Keys, name := Name}, Acc) when length(Keys) > 0 ->
+                        Acc ++ [Name, list_to_tuple(Keys)];
+                      (#{role := schema, name := Name}, Acc) ->
+                        Acc ++ [Name]
+              end, [], Path).
 
 %%-------------------------------------------------------------------
 %% @doc Construct a tree of configuration items from a flat list of

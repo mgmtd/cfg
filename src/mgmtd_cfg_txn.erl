@@ -58,17 +58,23 @@ get(#cfg_txn{ets_copy = Copy}, Path) ->
 get_tree(undefined, Path) ->
     get_tree(#cfg_txn{ets_copy = cfg}, Path);
 get_tree(#cfg_txn{ets_copy = Copy}, Path) ->
-    %% ?DBG("Path = ~p~n",[Path]),
+    ?DBG("Path = ~p~n",[Path]),
     Key = mgmtd_cfg_db:schema_path_to_key(Path),
+    ?DBG("Key = ~p~n",[Key]),
     Rows = ets:match_object(Copy, #cfg{path = Key ++ '_', _ = '_'}),
     SubRows = drop_path_prefix(Key, Rows),
-    %% ?DBG("Selected Rows ~p~n",[SubRows]),
     Tree = mgmtd_cfg_db:cfg_list_to_tree(SubRows),
     %% ?DBG("Tree ~p~n",[Tree]),
     SimpleTree = mgmtd_cfg_db:simplify_tree(Tree),
     %% ?DBG("Simple Tree ~p~n",[SimpleTree]),
     SimpleTree.
 
+%% We don't need the whole tree from the root if the user only requested path of the tree
+%% So we can drop nodes higher up the tree
+drop_path_prefix(Path, [#cfg{path = FullPath, node_type = Leaf} = Cfg]) when Leaf == leaf; Leaf == leaf_list ->
+    %% For a single leaf keep one parent - the name of the leaf itself
+    PathLen = length(Path) - 1,
+    [Cfg#cfg{path = lists:nthtail(PathLen, FullPath)}];
 drop_path_prefix(Path, Rows) ->
     PathLen = length(Path),
     New = lists:map(fun(#cfg{path = FullPath} = Cfg) ->
@@ -96,6 +102,8 @@ set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
             {error, Reason}
     end.
 
+list_keys(undefined, Path, Pattern) ->
+    list_keys(#cfg_txn{ets_copy = cfg}, Path, Pattern);
 list_keys(#cfg_txn{ets_copy = Copy}, Path, Pattern) ->
     ets:select(Copy, [{#cfg{path = Path ++ [Pattern], _ = '_'}, [], ['$1']}]).
 
