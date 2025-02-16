@@ -14,6 +14,8 @@
 
 %% API
 -export([start_link/0,
+         new_txn/0,
+         exit_txn/1,
          commit/1,
          subscribe/2,
          unsubscribe/1,
@@ -41,9 +43,9 @@
 %% @end
 %%--------------------------------------------------------------------
 -spec start_link() -> {ok, Pid :: pid()} |
-                      {error, Error :: {already_started, pid()}} |
-                      {error, Error :: term()} |
-                      ignore.
+          {error, Error :: {already_started, pid()}} |
+          {error, Error :: term()} |
+          ignore.
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
@@ -63,6 +65,12 @@ show_subscriptions() ->
 subscriptions() ->
     gen_server:call(?SERVER, get_subscriptions).
 
+new_txn() ->
+    gen_server:call(?SERVER, new_txn).
+
+exit_txn(Txn) ->
+    gen_server:call(?SERVER, {exit_txn, Txn}).
+
 commit(Txn) ->
     gen_server:call(?SERVER, {commit, Txn}).
 
@@ -77,10 +85,10 @@ commit(Txn) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec init(Args :: term()) -> {ok, State :: term()} |
-                              {ok, State :: term(), Timeout :: timeout()} |
-                              {ok, State :: term(), hibernate} |
-                              {stop, Reason :: term()} |
-                              ignore.
+          {ok, State :: term(), Timeout :: timeout()} |
+          {ok, State :: term(), hibernate} |
+          {stop, Reason :: term()} |
+          ignore.
 init([]) ->
     process_flag(trap_exit, true),
     {ok, #state{}}.
@@ -92,14 +100,14 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec handle_call(Request :: term(), From :: {pid(), term()}, State :: term()) ->
-                         {reply, Reply :: term(), NewState :: term()} |
-                         {reply, Reply :: term(), NewState :: term(), Timeout :: timeout()} |
-                         {reply, Reply :: term(), NewState :: term(), hibernate} |
-                         {noreply, NewState :: term()} |
-                         {noreply, NewState :: term(), Timeout :: timeout()} |
-                         {noreply, NewState :: term(), hibernate} |
-                         {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
-                         {stop, Reason :: term(), NewState :: term()}.
+          {reply, Reply :: term(), NewState :: term()} |
+          {reply, Reply :: term(), NewState :: term(), Timeout :: timeout()} |
+          {reply, Reply :: term(), NewState :: term(), hibernate} |
+          {noreply, NewState :: term()} |
+          {noreply, NewState :: term(), Timeout :: timeout()} |
+          {noreply, NewState :: term(), hibernate} |
+          {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
+          {stop, Reason :: term(), NewState :: term()}.
 handle_call({subscribe, Path, Pid}, _From, State) ->
     case initial_subscription_message(Path) of
         {error, _Reason} = Err ->
@@ -128,15 +136,21 @@ handle_call({unsubscribe, Ref}, _From, State) ->
 handle_call(get_subscriptions, _From, State) ->
     Subs = ets:tab2list(State#state.subs),
     {reply, Subs, State};
+handle_call(new_txn, _From, State) ->
+    Txn = mgmtd_cfg_txn:new(),
+    {reply, Txn, State};
+handle_call({exit_txn, Txn}, _From, State) ->
+    mgmtd_cfg_txn:exit_txn(Txn),
+    {reply, ok, State};
 handle_call({commit, Txn}, _From, State) ->
     %% Generate all subscription messages
     Subscriptions = [K || {K,[]} <- ets:tab2list(State#state.subs)],
     %% io:format(user, "with subscriptions ~p~n", [Subscriptions]),
     Messages = subscription_messages(Subscriptions, Txn),
     case mgmtd_cfg_txn:commit(Txn) of
-        ok ->
+        {ok, Txn2} ->
             send_subscription_messages(Messages),
-            {reply, ok, State};
+            {reply, {ok, Txn2}, State};
         Err ->
             {reply, Err, State}
     end;
@@ -151,10 +165,10 @@ handle_call(_Request, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec handle_cast(Request :: term(), State :: term()) ->
-                         {noreply, NewState :: term()} |
-                         {noreply, NewState :: term(), Timeout :: timeout()} |
-                         {noreply, NewState :: term(), hibernate} |
-                         {stop, Reason :: term(), NewState :: term()}.
+          {noreply, NewState :: term()} |
+          {noreply, NewState :: term(), Timeout :: timeout()} |
+          {noreply, NewState :: term(), hibernate} |
+          {stop, Reason :: term(), NewState :: term()}.
 handle_cast(_Request, State) ->
     {noreply, State}.
 
@@ -165,10 +179,10 @@ handle_cast(_Request, State) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec handle_info(Info :: timeout() | term(), State :: term()) ->
-                         {noreply, NewState :: term()} |
-                         {noreply, NewState :: term(), Timeout :: timeout()} |
-                         {noreply, NewState :: term(), hibernate} |
-                         {stop, Reason :: normal | term(), NewState :: term()}.
+          {noreply, NewState :: term()} |
+          {noreply, NewState :: term(), Timeout :: timeout()} |
+          {noreply, NewState :: term(), hibernate} |
+          {stop, Reason :: normal | term(), NewState :: term()}.
 handle_info({'DOWN', _, _, Pid, _}, State) ->
     %% Process down, remove all the subscriptions of this process
     case ets:lookup(State#state.sub_pids, Pid) of
@@ -213,7 +227,7 @@ terminate(_Reason, _State) ->
 -spec code_change(OldVsn :: term() | {down, term()},
                   State :: term(),
                   Extra :: term()) -> {ok, NewState :: term()} |
-                                      {error, Reason :: term()}.
+          {error, Reason :: term()}.
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -281,7 +295,6 @@ subscription_messages(Subscriptions, Txn) ->
 
 %% Given the subscribed path ["path", "to", "elem"] and
 %% a Txn containing operations as Schema path as a list of #schema maps
-%% 
 subscription_message(Path, Txn) ->
     case mgmtd_schema:lookup(Path) of
         #{node_type := list} ->

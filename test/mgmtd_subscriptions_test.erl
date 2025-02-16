@@ -8,74 +8,13 @@
 %%%-------------------------------------------------------------------
 -module(mgmtd_subscriptions_test).
 
--include("../src/mgmtd_schema.hrl").
--include("../include/mgmtd.hrl").
-
 -include_lib("eunit/include/eunit.hrl").
-
-
-cfg_schema() ->
-    [#container{name = "interface",
-                desc = "Interface configuration",
-                children = fun() -> interface_schema() end},
-     #container{name = "server",
-                desc = "Server configuration",
-                children = fun() -> server_list_schema() end},
-     #container{name = "client",
-                desc = "Client configuration",
-                children = fun() -> client_list_schema() end}].
-
-interface_schema() ->
-    [#leaf{name = "speed",
-           desc = "Interface speed",
-           type = {enum, [{"1GbE", "1 Gigabit/s Ethernet"}]},
-           default = "1GbE"}].
-
-server_list_schema() ->
-    [#list{name = "servers",
-           desc = "Server list",
-           key_names = ["name"],
-           data_callback = mgmtd,
-           children = fun() -> server_schema() end}].
-
-server_schema() ->
-    [#leaf{name = "name",
-           desc = "Server name",
-           type = string},
-     #leaf{name = "host",
-           desc = "Server hostname",
-           type = 'inet:ip-address',
-           default = "127.0.0.1"},
-     #leaf{name = "port",
-           desc = "Listen port",
-           type = 'inet:port-number',
-           default = 80}].
-
-client_list_schema() ->
-    [#list{name = "clients",
-           desc = "Client list",
-           key_names = ["host", "port"],
-           children = fun() -> client_schema() end}].
-
-client_schema() ->
-    [#leaf{name = "name",
-           desc = "Server name",
-           type = string},
-     #leaf{name = "host",
-           desc = "Server hostname",
-           type = 'inet:ip-address',
-           default = "127.0.0.1"},
-     #leaf{name = "port",
-           desc = "Server port",
-           type = 'inet:port-number',
-           default = 8080}].
-
 
 setup_schema() ->
     mgmtd_sup:start_link(),
     %% ok = mgmtd_cfg_db:remove_db("test_db", mnesia),
 
-    mgmtd:load_function_schema(fun() -> cfg_schema() end),
+    mgmtd:load_function_schema(fun() -> mgmtd_test_schema:cfg_schema() end),
     mgmtd_cfg_db:init("test_db", [{backend, mnesia}]),
     ok.
 
@@ -92,7 +31,7 @@ subscription_test_() ->
      fun() ->
              setup_schema(),
              init_cfg(),
-             start_subscriber()
+             spawn_subscriber()
      end,
      fun(Pid) ->
             destroy_schema(),
@@ -112,7 +51,7 @@ subscription_test_() ->
              {ok, SchemaPath} = mgmtd_schema:lookup_path(SetPath),
              Txn = mgmtd:txn_new(),
              {ok, Txn2} = mgmtd:txn_set(Txn, SchemaPath),
-             ok = mgmtd:txn_commit(Txn2),
+             {ok, Txn3} = mgmtd:txn_commit(Txn2),
              %% Expect the new list item
              receive
                  {updated, Updated1} ->
@@ -122,9 +61,8 @@ subscription_test_() ->
              end,
              UpdPath = ["server", "servers", {"newlistitem"}, "port", "8080"],
              {ok, SchemaPath1} = mgmtd_schema:lookup_path(UpdPath),
-             Txn3 = mgmtd:txn_new(),
              {ok, Txn4} = mgmtd:txn_set(Txn3, SchemaPath1),
-             ok = mgmtd:txn_commit(Txn4),
+             {ok, Txn5} = mgmtd:txn_commit(Txn4),
              %% Expect the intial value on susbcribing to the new list entry
              receive
                  {updated, Updated2} ->
@@ -143,7 +81,7 @@ subscription_test_() ->
              end
      end}.
 
-start_subscriber() ->
+spawn_subscriber() ->
     Self = self(),
     spawn_link(fun() ->
                        {ok, Ref} = mgmtd:subscribe(["server", "servers"], self()),

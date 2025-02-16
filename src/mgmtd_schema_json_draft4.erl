@@ -18,8 +18,8 @@ load_json_schema(#{<<"$schema">> := <<"http://json-schema.org/draft-04/schema#">
                  Opts) ->
     NameSpace = maps:get(namespace, Opts, ?DEFAULT_NS),
     case ets:info(NameSpace, id) of
-      undefined ->
-        ets:new(NameSpace, [named_table, {keypos, #schema.path}]);
+        undefined ->
+            ets:new(NameSpace, [named_table, {keypos, #schema.path}]);
         _ -> ok
     end,
     load_json_schema(Schema, [], NameSpace, Opts).
@@ -29,15 +29,15 @@ load_json_schema(#{<<"properties">> := Props}, Path, Ns, Opts) ->
 
 load_json_properties(Props, Path, Ns, Opts) ->
     maps:foreach(fun(K, V) ->
-                    Name = binary_to_list(K),
-                    load_json_property(V, Name, [Name | Path], Ns, Opts)
+                         Name = binary_to_list(K),
+                         load_json_property(V, Name, [Name | Path], Ns, Opts)
                  end, Props).
 
 load_json_property(#{<<"type">> := <<"object">>} = Object,
-                          Key,
-                          Path,
-                          Ns,
-                          #{config := Config} = Opts) ->
+                   Key,
+                   Path,
+                   Ns,
+                   #{config := Config} = Opts) ->
     %% A container, just store in the ets table Ns
     Container =
         #schema{path = lists:reverse(Path),
@@ -49,10 +49,10 @@ load_json_property(#{<<"type">> := <<"object">>} = Object,
     true = ets:insert_new(Ns, Container),
     load_json_properties(maps:get(<<"properties">>, Object, #{}), Path, Ns, Opts);
 load_json_property(#{<<"type">> := <<"array">>} = Object,
-                          Key,
-                          Path,
-                          Ns,
-                          #{config := Config} = Opts) ->
+                   Key,
+                   Path,
+                   Ns,
+                   #{config := Config} = Opts) ->
     %% An array, this could be a list or a leaf-list.
     %% Decide based on whether items is a single leaf type (leaf-list)
     case is_leaf_list_array(Object) of
@@ -73,7 +73,7 @@ load_json_property(#{<<"type">> := <<"array">>} = Object,
                         data_callback = maps:get(callback, Opts, mgmtd),
                         mandatory = true,
                         config = Config
-                        },
+                       },
             %% io:format(user, "LL - ~p~n", [lists:reverse(Path)]),
             true = ets:insert_new(Ns, LeafList);
         false ->
@@ -128,7 +128,7 @@ load_json_property(#{} = Item, Key, Path, Ns, #{config := Config}) ->
                 max_elements = maps:get(<<"maxItems">>, Item, undefined),
                 mandatory = true,
                 config = Config},
-    %io:format(user, "L - ~p~n", [lists:reverse(Path)]),
+                                                %io:format(user, "L - ~p~n", [lists:reverse(Path)]),
     true = ets:insert_new(Ns, Leaf).
 
 %% When no index is provided by the schema insert an integer based

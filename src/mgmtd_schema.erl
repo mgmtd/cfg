@@ -53,12 +53,12 @@
 %% needs to be provided at load time.
 %%
 -spec load_json_schema_file(FilePath :: file:filename()) ->
-                               ok | {error, Reason :: term()}.
+          ok | {error, Reason :: term()}.
 load_json_schema_file(File) ->
     mgmtd_schema_json_draft4:load_file(File).
 
 -spec load_json_schema_file(FilePath :: file:filename(), Opts :: map()) ->
-                               ok | {error, Reason :: term()}.
+          ok | {error, Reason :: term()}.
 load_json_schema_file(File, Opts) ->
     mgmtd_schema_json_draft4:load_file(File, Opts).
 
@@ -104,8 +104,14 @@ children(Path) ->
 children(Path, CmdType) ->
     children(?DEFAULT_NS, Path, CmdType).
 
+children(Ns, Path, delete) ->
+    SchemaPath = lists:filter(fun(P) -> not is_tuple(P) end, Path),
+    Recs = ets:match_object(Ns, #schema{path = SchemaPath ++ ['_'], has_list = true, _ = '_'}),
+    ?DBG("Found children in schema db at path ~p~n~p~n", [SchemaPath, Recs]),
+    lists:map(fun(R) -> schema_to_map(R, delete) end, Recs);
 children(Ns, Path, CmdType) ->
     SchemaPath = lists:filter(fun(P) -> not is_tuple(P) end, Path),
+    ?DBG("Finding children in schema db at path ~p~n", [SchemaPath]),
     Recs = ets:match_object(Ns, #schema{path = SchemaPath ++ ['_'], _ = '_'}),
     lists:map(fun(R) -> schema_to_map(R, CmdType) end, Recs).
 
@@ -154,6 +160,7 @@ schema_to_map(#schema{path = Path} = S, CmdType) ->
       config => S#schema.config,
       data_callback => S#schema.data_callback,
       cmd_type => CmdType,
+      has_list => S#schema.has_list,
       children => fun(ChildPath) -> children(ChildPath, CmdType) end }.
 
 %% @doc Validate Item against the schema stored at Path.
@@ -169,20 +176,20 @@ cast_value(Path, Value) ->
                 cast(Type, Value);
             #{node_type := leaf_list, type := Type} when is_list(Value) ->
                 lists:map(fun(Val) ->
-                            case cast(Type, Val) of
-                                {ok, InternalVal} ->
-                                    {ok, InternalVal};
-                                Err ->
-                                    throw(Err)
-                            end
-                        end, Value);
+                                  case cast(Type, Val) of
+                                      {ok, InternalVal} ->
+                                          {ok, InternalVal};
+                                      Err ->
+                                          throw(Err)
+                                  end
+                          end, Value);
             _ ->
                 {error, "Invalid path"}
         end
     catch error:Reason:_Trace ->
-        {error, Reason}
+            {error, Reason}
     end.
-        
+
 
 cast({uint64, Range}, Token) ->
     FullRange = merge_ranges(uint64_range(), Range),
@@ -288,8 +295,8 @@ cast_integer_in_range(_Int, _) ->
 
 cast_enum(Token, AllowedVals) ->
     lists:foldl(fun(Enum, Result) ->
-                    cast_enum_val(Enum, Token, Result)
-              end, {error, "Unkknown enum value"}, AllowedVals).
+                        cast_enum_val(Enum, Token, Result)
+                end, {error, "Unkknown enum value"}, AllowedVals).
 
 cast_enum_val(_Enum, _Token, {ok, Res}) -> {ok, Res};
 cast_enum_val({Enum, _Desc}, Enum, _) -> {ok, Enum};

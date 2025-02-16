@@ -12,7 +12,7 @@
 
 -export([init/2, remove_db/2, transaction/1, copy_to_ets/0]).
 
--export([insert_path_items/3, check_conflict/3]).
+-export([insert_path_items/3, check_conflict/3, delete_path_items/2]).
 
 -export([cfg_list_to_tree/1, simplify_tree/1, schema_path_to_key/1]).
 
@@ -56,7 +56,13 @@ write(permanent, #cfg{} = Cfg) ->
     BackendMod = backend(),
     BackendMod:write(Cfg);
 write({ets, Ets}, #cfg{} = Cfg) ->
-    ets:insert(Ets, Cfg).
+    to_ok(ets:insert(Ets, Cfg)).
+
+delete(permanent, Path) ->
+    BackendMod = backend(),
+    BackendMod:delete(Path);
+delete({ets, Ets}, Path) ->
+    to_ok(ets:delete(Ets, Path)).
 
 lookup(Path) ->
     lookup(permanent, Path).
@@ -67,6 +73,23 @@ lookup(permanent, Path) ->
 lookup({ets, Ets}, Path) ->
     ets:lookup(Ets, Path).
 
+match_delete(Pattern) ->
+    match_delete(permanent, Pattern).
+
+match_delete(permanent, Pattern) ->
+    BackendMod = backend(),
+    BackendMod:match_delete(Pattern);
+match_delete({ets, Ets}, Pattern) ->
+    to_ok(ets:match_delete(Ets, Pattern)).
+
+match(Pattern) ->
+    match(permanent, Pattern).
+
+match(permanent, Pattern) ->
+    BackendMod = backend(),
+    BackendMod:match(Pattern);
+match({ets, Ets}, Pattern) ->
+    to_ok(ets:match(Ets, Pattern)).
 
 list_keys(Path) ->
     list_keys(Path, '$1').
@@ -92,6 +115,8 @@ backend_mod(mnesia) -> mgmtd_cfg_db_mnesia;
 backend_mod(json)   -> mgmtd_cfg_db_json;
 backend_mod(config) -> mgmtd_cfg_db_config.
 
+to_ok(true) -> ok;
+to_ok(Else) -> Else.
 
 %% Insert all the database items required for a single configuration
 %% item.  One entry is required for each level in the path plus a few
@@ -163,7 +188,7 @@ insert_path_items(Db, [I | Is], Value, Path) ->
     end.
 
 insert_list_keys(Db, Path, #{role := schema, key_names := KeyNames,
-                                        key_values := KeyValues}) ->
+                             key_values := KeyValues}) ->
     NVPairs = lists:zip(KeyNames, KeyValues),
     lists:foreach(fun({Name, Value}) ->
                           Cfg = #cfg{name = Name,
@@ -204,7 +229,7 @@ check_conflict(Db, [I|Is], Value, Path) ->
                     case read(Db, ListItemPath) of
                         [] ->
                             check_conflict(Db, Is, Value);
-                        [#cfg{node_type = list_key, name = ListKeyNames}] ->
+                        [#cfg{node_type = list_key}] ->
                             case validate_set_list(Db, ListItemPath, I) of
                                 ok ->
                                     check_conflict(Db, Is, Value, ListItemPath);
@@ -217,18 +242,61 @@ check_conflict(Db, [I|Is], Value, Path) ->
                 [#cfg{}] ->
                     {error, "list item schema conflict"}
             end;
-        #{role := schema, node_type := Leaf, name := Name} when
-              Leaf == leaf;
-              Leaf == leaf_list ->
+        #{role := schema, node_type := Leaf, name := Name} when ?is_leaf(Leaf) ->
             FullPath = Path ++ [Name],
             case read(Db, FullPath) of
                 [] ->
                     ok;
-                [#cfg{node_type = Leaf}] ->
+                [#cfg{node_type = Leaf}] when ?is_leaf(Leaf) ->
                     ok;
                 [_] ->
                     {error, "leaf item schema conflict"}
             end
+    end.
+
+%% Delete a single list entry along with all nodes leading up to it that are
+%% not still used by another list item or child
+%%
+-spec delete_path_items(ets:tid(), [#{role := schema}]) -> ok.
+delete_path_items(Db, Path) ->
+    %% Steps:
+    %% 1. delete all children of the list item - its leaves
+    %% 2. delete the list_key special node
+    %% 3. delete the list node if this is the last list entry
+    %% 4. delete all parent nodes that no longer have any children
+    delete_path_items_all(Db, lists:reverse(Path)).
+
+delete_path_items_all(_Db, []) ->
+    ok;
+delete_path_items_all(Db, [I|Is]) ->
+    case I of
+        #{role := schema, node_type := list, path := Path, key_values := KVs} ->
+            ListItemPath = Path ++ [list_to_tuple(KVs)],
+            Pattern = #cfg{path = ListItemPath ++ '_', _ = '_'},
+            ok = match_delete(Db, Pattern),
+            %% See if we can also delete the list node, Check if there are any remaining list items
+            ListNodePattern = #cfg{path = Path ++ '_', node_type = list_key, _ = '_'},
+            case match(Db, ListNodePattern) of
+                [] ->
+                    ok = delete(Db, Path);
+                [_|_] ->
+                    ok
+            end,
+            delete_path_items_all(Db, Is);
+        #{role := schema, node_type := container, path := Path, name := Name} ->
+            Pattern = #cfg{path = Path ++ '_', _ = '_'},
+            case match(Db, Pattern) of
+                [] ->
+                    ok;
+                [_] ->
+                    %% Nothing below this point, delete the node and carry on up the tree
+                    delete(Db, Path),
+                    delete_path_items_all(Db, Is);
+                [_|_] ->
+                    ok
+            end;
+        _Else ->
+            ok
     end.
 
 
@@ -274,9 +342,9 @@ schema_list_key_to_cfg(#{role := schema, key_names := KNs} = C, Path, Key) ->
 schema_path_to_key(Path) ->
     lists:foldl(fun(#{role := schema, node_type := list, key_values := Keys, name := Name}, Acc) when length(Keys) > 0 ->
                         Acc ++ [Name, list_to_tuple(Keys)];
-                      (#{role := schema, name := Name}, Acc) ->
+                   (#{role := schema, name := Name}, Acc) ->
                         Acc ++ [Name]
-              end, [], Path).
+                end, [], Path).
 
 %%-------------------------------------------------------------------
 %% @doc Construct a tree of configuration items from a flat list of
@@ -297,7 +365,7 @@ cfg_list_to_tree([], Z) ->
     %% Finally extract a simple cfg tree from the zntree, skipping root
     zntree_to_cfg_tree(mgmtd_zntrees:children(Z)).
 
-% Insert an item in the zntree. Z points to the children of the root node
+                                                % Insert an item in the zntree. Z points to the children of the root node
 zntree_insert_item(#cfg{path = Path} = Cfg, Z) ->
     Z1 = zntree_node_at_path(Path, Z),
     Z2 = mgmtd_zntrees:insert(Cfg, Z1),
@@ -347,7 +415,7 @@ zntree_to_cfg_tree(Z, Acc) ->
                                         NT == list_key ->
             Acc1 = [Cfg#cfg{value =
                                 zntree_to_cfg_tree(mgmtd_zntrees:children(Z), [])}
-                    | Acc],
+                   | Acc],
             zntree_to_cfg_tree(mgmtd_zntrees:right(Z), Acc1)
     end.
 

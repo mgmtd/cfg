@@ -16,13 +16,13 @@
          txn_id,
          ops = [],
          ets_copy
-         }).
+        }).
 
 -type txn() :: #cfg_txn{}.
 
 -export_type([txn/0]).
 
--export([new/0, exit_txn/1, get/2, get_tree/2, set/3, list_keys/3, commit/1]).
+-export([new/0, exit_txn/1, get/2, get_tree/2, set/3, delete/2, list_keys/3, commit/1]).
 
 new() ->
     TxnId = erlang:unique_integer(),
@@ -34,17 +34,28 @@ exit_txn(#cfg_txn{ets_copy = EtsCopy}) ->
     catch ets:delete(EtsCopy),
     ok.
 
-
 %% @doc commit the operations stored up in the configuration transaction
-commit(#cfg_txn{ets_copy = _Copy, ops = Ops}) ->
+commit(#cfg_txn{ops = Ops} = Txn) ->
     Fun = fun() ->
                   lists:foreach(fun({set, Path, Value}) ->
-                                    mgmtd_cfg_db:insert_path_items(permanent, Path, Value);
-                               (_) ->
-                                    ok
-                            end, Ops)
+                                        mgmtd_cfg_db:insert_path_items(permanent, Path, Value);
+                                   ({delete, Path}) ->
+                                        mgmtd_cfg_db:delete_path_items(permanent, Path)
+                                end, Ops)
           end,
-    mgmtd_cfg_db:transaction(Fun).
+    case mgmtd_cfg_db:transaction(Fun) of
+        ok ->
+            %% Other parts of the tree might have changed underneath us, so provide the user with
+            %% a new transaction with a clean ets copy of the latest.
+            %% Nice to have - detect if anything changed in other session(s) and warn the user
+            %% about what was changed.
+            ok = exit_txn(Txn),
+            {ok, new()};
+        Err ->
+            %% The commit failed, leave the existing transaction alive so the user can
+            %% fix the errors
+            Err
+    end.
 
 -spec get(#cfg_txn{}, cfg:path()) -> {ok, cfg:value()} | undefined.
 get(#cfg_txn{ets_copy = Copy}, Path) ->
@@ -69,8 +80,8 @@ get_tree(#cfg_txn{ets_copy = Copy}, Path) ->
     %% ?DBG("Simple Tree ~p~n",[SimpleTree]),
     SimpleTree.
 
-%% We don't need the whole tree from the root if the user only requested path of the tree
-%% So we can drop nodes higher up the tree
+%% We don't need the whole tree from the root if the user only requested part of the tree
+%% so just drop nodes higher up the tree
 drop_path_prefix(Path, [#cfg{path = FullPath, node_type = Leaf} = Cfg]) when Leaf == leaf; Leaf == leaf_list ->
     %% For a single leaf keep one parent - the name of the leaf itself
     PathLen = length(Path) - 1,
@@ -85,7 +96,7 @@ drop_path_prefix(Path, Rows) ->
                     (_) -> true
                  end, New).
 
-% -spec set(#cfg_txn{}, [#cfg_schema{}], term()) -> ok | {error, String()}.
+-spec set(#cfg_txn{}, [#schema{}], term()) -> ok | {error, string()}.
 set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
     case mgmtd_schema:cast_value(Path, Value) of
         {ok, InternalValue} ->
@@ -101,6 +112,10 @@ set(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path, Value) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+delete(#cfg_txn{ets_copy = Copy, ops = Ops} = Txn, Path) ->
+    mgmtd_cfg_db:delete_path_items({ets, Copy}, Path),
+    {ok, Txn#cfg_txn{ops = [{delete, Path} | Ops]}}.
 
 list_keys(undefined, Path, Pattern) ->
     list_keys(#cfg_txn{ets_copy = cfg}, Path, Pattern);

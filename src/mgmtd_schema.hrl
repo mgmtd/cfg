@@ -32,6 +32,7 @@
          max_elements,
          pattern :: undefined | string(),
          mandatory = false :: boolean(),
+         has_list = false :: boolean(),
          config = true :: boolean()}).
 
 %% Record we store in the configuration database after validation against the schema.

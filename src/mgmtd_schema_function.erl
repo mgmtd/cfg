@@ -12,8 +12,8 @@ load(Fun, Opts) when is_function(Fun) ->
 
 load(Fun, Path, Ns, IsConfig) ->
     lists:foreach(fun(Child) ->
-        load_node(Child, Path, Ns, IsConfig)
-    end, Fun()).
+                          load_node(Child, Path, Ns, IsConfig)
+                  end, Fun()).
 
 load_node(#container{name = Name, desc = Desc, config = Config0} = Node, Path, Ns, IsConfig) ->
     Config = inherited_config(Config0, IsConfig),
@@ -38,9 +38,11 @@ load_node(#list{name = Name, desc = Desc, key_names = KeyNames, config = Config0
                 desc = Desc,
                 min_elements = Node#list.min_elements,
                 max_elements = Node#list.max_elements,
+                has_list = true,
                 config = Config},
-    %io:format(user, "L - ~p~n", [lists:reverse(Path)]),
+                                                % io:format(user, "L - ~p~n", [lists:reverse(Path)]),
     true = ets:insert_new(Ns, LeafList),
+    ok = mark_has_list_descendent(Ns, Path),
     load(Node#list.children, [Name | Path], Ns, Config);
 load_node(#leaf{name = Name, desc = Desc, type = Type, default = Default, config = Config0} = Node, Path, Ns, IsConfig) ->
     Config = inherited_config(Config0, IsConfig),
@@ -53,7 +55,7 @@ load_node(#leaf{name = Name, desc = Desc, type = Type, default = Default, config
                 default = Default,
                 mandatory = Node#leaf.mandatory,
                 config = Config},
-    %io:format(user, "L - ~p~n", [lists:reverse(Path)]),
+                                                %io:format(user, "L - ~p~n", [lists:reverse(Path)]),
     true = ets:insert_new(Ns, Leaf);
 load_node(#leaf_list{name = Name, desc = Desc, type = Type, config = Config0} = Node, Path, Ns, IsConfig) ->
     Config = inherited_config(Config0, IsConfig),
@@ -66,7 +68,7 @@ load_node(#leaf_list{name = Name, desc = Desc, type = Type, config = Config0} = 
                 min_elements = Node#leaf_list.min_elements,
                 max_elements = Node#leaf_list.max_elements,
                 config = Config},
-    %io:format(user, "L - ~p~n", [lists:reverse(Path)]),
+                                                %io:format(user, "L - ~p~n", [lists:reverse(Path)]),
     true = ets:insert_new(Ns, LeafList).
 
 assert_key_names(KeyNames, ChildrenFun) ->
@@ -86,6 +88,14 @@ node_name(#leaf{name = Name}) -> Name;
 node_name(#leaf_list{name = Name}) -> Name;
 node_name(#list{name = Name}) -> Name;
 node_name(#container{name = Name}) -> Name.
+
+mark_has_list_descendent(_Ns, []) ->
+    ok;
+mark_has_list_descendent(Ns, Path) ->
+    SchPath = lists:reverse(Path),
+    [Node] = ets:lookup(Ns, SchPath),
+    ets:insert(Ns, Node#schema{has_list = true}),
+    mark_has_list_descendent(Ns, tl(Path)).
 
 
 %% Use yang rules here (Section 7.19.1 of RFC 6020):

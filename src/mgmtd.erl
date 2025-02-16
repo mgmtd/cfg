@@ -12,10 +12,10 @@
          load_function_schema/1, load_function_schema/2,
          load_config_db/1]).
 %% Transaction API
--export([txn_new/0, txn_exit/1, txn_set/2, txn_show/2, txn_commit/1]).
+-export([txn_new/0, txn_exit/1, txn_set/2, txn_delete/2, txn_show/2, txn_commit/1]).
 %% Schema API
 -export([schema_children/2, schema_children/3]).
-%% 
+
 -export([lookup/1, lookup/2]).
 %% Data Callback API towards included configuration database
 -export([list_keys/3]).
@@ -90,14 +90,15 @@ get_item(Path) ->
 %% --------------------------------------------------------------------
 -spec txn_new() -> mgmtd_cfg_txn:txn().
 txn_new() ->
-    mgmtd_cfg_txn:new().
+    mgmtd_cfg_server:new_txn().
 
 txn_exit(Txn) ->
-    mgmtd_cfg_txn:exit_txn(Txn).
+    mgmtd_cfg_server:exit_txn(Txn).
 
 txn_set(Txn, SchemaPath) ->
     %% io:format(user, "Setting path ~p in Txn ~p~n", [pp_path(SchemaPath), Txn]),
     Operations = path_to_operations(SchemaPath),
+    %% io:format(user, "Setting path ~p in Txn ~p~n", [pp_path(SchemaPath), Operations]),
     txn_set_operations(Txn, Operations).
 
 txn_set_operations(Txn, []) ->
@@ -109,6 +110,10 @@ txn_set_operations(Txn, [{Path, Value} | Ops]) ->
         {error, _Err} = Err ->
             Err
     end.
+
+txn_delete(Txn, SchemaPath) ->
+    %% io:format(user, "Deleting path ~p in Txn ~p~n", [pp_path(SchemaPath), Txn]),
+    mgmtd_cfg_txn:delete(Txn, SchemaPath).
 
 txn_show(Txn, SchemaPath) ->
     ?DBG("TXN SHOW ~p~n", [SchemaPath]),
@@ -195,12 +200,12 @@ schema_list_to_path([#{role := schema, name := Name} | Ss], Acc) ->
 
 pp_path(SchemaPath) ->
     lists:reverse(
-        lists:foldl(
-            fun(#{node_type := list, key_values := KeyValues, name := Name}, Acc) ->
-                    [list_to_tuple(KeyValues), Name | Acc];
-                (#{name := Name}, Acc) ->
-                    [Name | Acc]
-            end, [], SchemaPath)).
+      lists:foldl(
+        fun(#{node_type := list, key_values := KeyValues, name := Name}, Acc) ->
+                [list_to_tuple(KeyValues), Name | Acc];
+           (#{name := Name}, Acc) ->
+                [Name | Acc]
+        end, [], SchemaPath)).
 
 %% A single command might set multiple parameter values
 %% Generate separate set operations for each value
@@ -216,4 +221,3 @@ path_to_operations([#{node_type := list} = List| Ps], Path, Acc) ->
 path_to_operations([#{node_type := Leaf, value := Value} = Item | Ps], Path, Acc) when Leaf == leaf; Leaf == leaf_list ->
     path_to_operations(Ps, Path, [{lists:reverse([Item | Path]), Value} | Acc]).
 
-    

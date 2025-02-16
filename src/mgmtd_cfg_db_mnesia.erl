@@ -17,8 +17,10 @@
 %% Transaction based operations
 -export([transaction/1,
          read/1,
+         match/1,
          write/1,
          delete/1,
+         match_delete/1,
          first/0,
          next/1]).
 
@@ -60,17 +62,25 @@ transaction(Fun) ->
             ok;
         Err ->
             ?DBG("Transaction errro ~p",[Err]),
+            io:format(user, "Transaction errro ~p",[Err]),
             {error, "FAIL"}
     end.
 
 read(Key) ->
     mnesia:read(cfg, Key).
 
+match(Key) ->
+    mnesia:match_object(cfg, Key, write).
+
 write(#cfg{} = Cfg) ->
     mnesia:write(cfg, Cfg, write).
 
 delete(Key) ->
-    mnesia:delete(cfg, Key).
+    mnesia:delete(cfg, Key, write).
+
+match_delete(Key) ->
+    Items = mnesia:match_object(cfg, Key, write),
+    lists:foreach(fun(I) -> ok = mnesia:delete_object(cfg, I, write) end, Items).
 
 first() ->
     mnesia:first(cfg).
@@ -86,10 +96,11 @@ select(Path, Pattern) ->
 
 -spec copy_to_ets() -> ets:tid().
 copy_to_ets() ->
-    Ets = ets:new(cfg_txn, [ordered_set, {keypos, #cfg.path}]),
+    Ets = ets:new(cfg_txn, [public, ordered_set, {keypos, #cfg.path}]),
     Fun = fun() -> mnesia:match_object(#cfg{_ = '_'}) end,
     {atomic, Rows} = mnesia:transaction(Fun),
     lists:foreach(fun(Row) -> ets:insert(Ets, Row) end, Rows),
+    %% io:format(user, "Copied ~p~n",[ets:tab2list(Ets)]),
     Ets.
 
 %%--------------------------------------------------------------------
